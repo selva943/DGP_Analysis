@@ -4,11 +4,7 @@
     "api/index.py": {
       "maxDuration": 60,
       "memory": 1024,
-      "includeFiles": [
-        "_dashboard_template.html",
-        "liveapp/frontend/index.html",
-        "liveapp/frontend/app.js"
-      ]
+      "includeFiles": "**/*.{html,js}"
     }
   },
   "rewrites": [
