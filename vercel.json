@@ -11,15 +11,6 @@
       ]
     }
   },
-  "excludeFiles": [
-    "**/__pycache__/**",
-    "**/.venv/**",
-    "Input/**",
-    "History/**",
-    "Output/**",
-    "liveapp/storage/**",
-    "liveapp/.env"
-  ],
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index.py" }
   ]
