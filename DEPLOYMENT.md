@@ -272,7 +272,7 @@ instructions rather than failing.
 ```json
 {
   "framework": null,
-  "regions": ["nrt1"],
+  "regions": ["hnd1"],
   "functions": { "api/index.py": { "maxDuration": 300 } },
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index.py" }]
 }
@@ -281,9 +281,26 @@ instructions rather than failing.
 - **`"framework": null`** forces file-based routing. Without it, the presence of
   `fastapi` in `requirements.txt` lets Vercel apply a FastAPI framework preset,
   and a framework preset takes precedence over files under `/api`.
-- **`regions: ["nrt1"]`** is Tokyo, matching an `ap-northeast-1` Supabase
-  pooler. New projects default to `iad1` (Washington, D.C.). Use whichever
-  region matches your connection string. One region, so it is fine on Hobby.
+- **`regions: ["hnd1"]`** is Tokyo, matching an `ap-northeast-1` Supabase
+  pooler. New projects default to `iad1` (Washington, D.C.). One region, so it
+  is fine on Hobby.
+
+  Region codes are not guessable — Vercel rejects an unknown one outright with
+  `Invalid region selector` before the build starts. The full list is at
+  <https://vercel.com/docs/regions>. The Asia-Pacific ones you are likely to
+  need:
+
+  | Code | Location |
+  |---|---|
+  | `hnd1` | Tokyo (`ap-northeast-1`) |
+  | `kix1` | Osaka (`ap-northeast-3`) |
+  | `icn1` | Seoul (`ap-northeast-2`) |
+  | `sin1` | Singapore (`ap-southeast-1`) |
+  | `bom1` | Mumbai (`ap-south-1`) |
+
+  Match whichever `aws-<region>` your Supabase connection string names. If you
+  would rather not maintain this, delete the `regions` key entirely — the
+  function still works, just with higher database latency on every request.
 - **`maxDuration: 300`** is the Hobby ceiling with Fluid compute. Importing a
   large bundle is the slowest thing the function does.
 - **`includeFiles` was removed on purpose.** Vercel's Python builder never reads
