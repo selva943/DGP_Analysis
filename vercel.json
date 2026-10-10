@@ -1,17 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "",
-  "outputDirectory": "api",
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "memory": 1024
+      "memory": 1024,
+      "includeFiles": [
+        "_dashboard_template.html",
+        "liveapp/frontend/index.html",
+        "liveapp/frontend/app.js"
+      ]
     }
   },
-  "includeFiles": [
-    "_dashboard_template.html",
-    "liveapp/frontend/**/*"
-  ],
   "excludeFiles": [
     "**/__pycache__/**",
     "**/.venv/**",

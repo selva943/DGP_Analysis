@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -97,10 +99,29 @@ def root():
     raise HTTPException(status_code=404, detail="frontend/index.html not found")
 
 
+def find_template():
+    """Locate _dashboard_template.html.
+
+    Normally it sits at the repo root, one level above liveapp/. Serverless
+    bundlers can relocate the function, so a couple of fallbacks are checked
+    before giving up.
+    """
+    candidates = [
+        LIVEAPP_DIR.parent / "_dashboard_template.html",
+        LIVEAPP_DIR / "_dashboard_template.html",
+        Path.cwd() / "_dashboard_template.html",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    print(f"[liveapp] template not found; looked in: {[str(c) for c in candidates]}")
+    return None
+
+
 @app.get("/_dashboard_template.html")
 def dashboard_template():
-    tpl = (LIVEAPP_DIR.parent / "_dashboard_template.html")
-    if tpl.is_file():
+    tpl = find_template()
+    if tpl is not None:
         return FileResponse(tpl)
     raise HTTPException(status_code=404, detail="_dashboard_template.html not found")
 
