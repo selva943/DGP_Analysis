@@ -18,7 +18,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LIVEAPP = ROOT / "liveapp"
 
-# Vercel runs from the repo root; make the app package importable.
+# Vercel bundles a function by statically tracing imports. The app lives in
+# liveapp/app/, which is only reachable through the sys.path entry set up
+# here at runtime - a tracer cannot follow that, so the package could be left
+# out of the bundle. Importing it explicitly below makes the dependency
+# visible to the tracer.
 for p in (str(LIVEAPP), str(ROOT)):
     if p not in sys.path:
         sys.path.insert(0, p)
