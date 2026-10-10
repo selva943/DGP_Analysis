@@ -27,6 +27,49 @@ the code will help until you do.
 
 ---
 
+## The "Multiple applications detected" prompt
+
+On import, Vercel may offer to deploy this repository as **Services** and
+suggest a three-service `vercel.json`. **Decline it and set the Application
+Preset to `Other`.**
+
+This repository contains exactly one application. The detector is
+pattern-matching three files that are all the same app:
+
+| What Vercel calls an app | What it actually is |
+|---|---|
+| `DGP_Analysis` (root) | the same FastAPI app |
+| `liveapp` (`liveapp/main.py`) | the local dev launcher, same app |
+| `app` (`liveapp/app/main.py`) | the same FastAPI app, one folder deeper |
+
+Do not add a `services` key to `vercel.json`. Per Vercel's own documentation:
+
+> "A project builds as services only when this setting is selected and a
+> `services` key is present in `vercel.json`." — and "You don't need services if
+> your project uses a single framework."
+
+The moment `services` is present, the top-level `functions`, `framework`,
+`buildCommand`, `installCommand`, `devCommand`, `ignoreCommand` and
+`outputDirectory` keys **become invalid** and must move inside a service. The
+existing `vercel.json` is written for the normal (non-services) mode and is
+correct as-is.
+
+Vercel scans for a Python entrypoint in `app.py`, `index.py`, `server.py`,
+`main.py`, `wsgi.py` and `asgi.py` at the project root, plus the same
+filenames inside `src/`, `app/` and `api/`. At the repository root this
+repository has **exactly one** match:
+
+```
+api/index.py     <-- the entrypoint
+```
+
+`liveapp/main.py` and `liveapp/app/main.py` sit under `liveapp/`, which is not
+a scanned directory, so they are never candidates. That is precisely why the
+Root Directory must stay at the repository root — set it to `liveapp` and
+`liveapp/app/main.py` becomes the entrypoint instead.
+
+---
+
 ## Architecture
 
 Two tiers, and keeping them straight is the whole design:
