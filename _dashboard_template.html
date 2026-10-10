@@ -1,0 +1,1907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DGP Easy SBF Deep-Dive Dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --brand: #4f46e5;
+    --brand-soft: #eef2ff;
+    --brand-dark: #4338ca;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --blue: #2563eb;
+    --blue-bg: #dbeafe;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-lg: 0 8px 24px rgba(16,24,40,.08);
+    --r: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; line-height: 1.45; }
+  .layout { display: flex; flex-direction: column; min-height: 100vh; }
+  .layout-body { display: flex; flex: 1; min-width: 0; }
+
+  /* Global top header (brand + tools + nav) */
+  .topbar { position: sticky; top: 0; z-index: 100; box-shadow: var(--shadow); display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 20px; background: var(--card); border-bottom: 1px solid var(--line); }
+  .topbar .stools { flex-direction: row; margin-left: auto; }
+  .topbar .stools .btn { width: auto; justify-content: center; flex: none; }
+  .topbar .navrow { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+  @media (max-width: 960px) {
+    .topbar .stools { margin-left: 0; flex: 1 1 100%; }
+  }
+  @media (max-width: 560px) {
+    .topbar { padding: 12px 14px; }
+  }
+
+  /* Sidebar (left nav) */
+  .sidebar { width: 304px; flex: none; background: var(--card); border-right: 1px solid var(--line); padding: 20px 18px; display: flex; flex-direction: column; gap: 18px; position: sticky; top: var(--hdr, 0); height: calc(100vh - var(--hdr, 0)); overflow-y: auto; }
+  .sbrand { display: flex; align-items: center; gap: 12px; }
+  .title { min-width: 0; }
+  .title h1 { font-size: 16px; font-weight: 700; letter-spacing: -.01em; line-height: 1.25; }
+  .title p { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .stools { display: flex; flex-direction: column; gap: 8px; }
+  .stools .btn { justify-content: flex-start; width: 100%; }
+  .btn { display: inline-flex; align-items: center; gap: 7px; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 9px; padding: 8px 13px; font-size: 13px; cursor: pointer; font-weight: 600; transition: all .15s; box-shadow: var(--shadow); white-space: nowrap; }
+  .btn:hover { border-color: var(--brand); color: var(--brand); transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+  .btn.primary:hover { background: var(--brand-dark); color: #fff; }
+  .btn svg { width: 15px; height: 15px; flex: none; }
+  .sfoot { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+  /* Content */
+  .content { flex: 1; min-width: 0; padding: 20px 24px 80px; }
+
+  /* Responsive layout: sidebar becomes a top bar on small screens */
+  @media (max-width: 960px) {
+    .layout { flex-direction: column; }
+    .layout-body { flex-direction: column; }
+    .sidebar { width: 100%; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--line); gap: 12px; padding: 14px 16px; }
+    .content { padding: 16px 16px 80px; }
+    .stools { flex-direction: row; flex-wrap: wrap; }
+    .stools .btn { width: auto; flex: 1; justify-content: center; }
+    .sfoot { display: none; }
+  }
+  @media (max-width: 560px) {
+    .btn .lbl { display: none; }
+    .title h1 { font-size: 15px; }
+  }
+
+  /* Breadcrumb */
+  .crumbs { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 9px 12px; margin-bottom: 16px; font-size: 13px; box-shadow: var(--shadow); }
+  .crumb { color: var(--brand); cursor: pointer; font-weight: 600; padding: 2px 4px; border-radius: 6px; }
+  .crumb:hover { background: var(--brand-soft); text-decoration: none; }
+  .crumb.cur { color: var(--ink); cursor: default; font-weight: 700; background: var(--brand-soft); }
+  .sep { color: #cbd5e1; }
+
+  /* KPI cards */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; margin-bottom: 16px; scroll-margin-top: calc(var(--hdr, 0) + 10px); }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 15px; position: relative; overflow: hidden; box-shadow: var(--shadow); display: flex; flex-direction: column; min-height: 88px; }
+  .kpi .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi .val { font-size: 24px; font-weight: 800; margin-top: 4px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .kpi .sub { font-size: 11px; color: var(--muted); margin-top: auto; padding-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi.green .val { color: var(--green); }
+  .kpi.amber .val { color: var(--amber); }
+  .kpi.red .val { color: var(--red); }
+  .kpi.blue .val { color: var(--blue); }
+  .kpi::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--line); }
+  .kpi.green::before { background: var(--green); }
+  .kpi.amber::before { background: var(--amber); }
+  .kpi.red::before { background: var(--red); }
+  .kpi.blue::before { background: var(--blue); }
+  @media (max-width: 520px) { .kpis { grid-template-columns: repeat(2, 1fr); gap: 10px; } }
+
+  /* Chart card */
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
+  .card h3 { font-size: 14px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; letter-spacing: -.01em; }
+  .card h3 .hint { font-size: 11px; color: var(--muted); font-weight: 500; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap; align-items: center; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
+  #chartBox { width: 100%; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
+  #chartBox svg { display: block; width: 100%; height: auto; }
+
+  /* Table */
+  .table-card { overflow: hidden; padding: 0; }
+  .tbl-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .tbl-tools .tbl-title { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .tbl-tools .tbl-title .sub { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .search { border: 1px solid var(--line); border-radius: 9px; padding: 7px 11px; font-size: 13px; width: 210px; outline: none; font-family: inherit; color: var(--ink); background: #fff; transition: border-color .15s, box-shadow .15s; }
+  .search:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+  @media (max-width: 560px) { .search { width: 100%; } .tbl-tools .search { width: 100%; } }
+  .tbl-tools .cnt { font-size: 12px; color: var(--muted); }
+  .ttr { display: flex; gap: 8px; }
+  .tbl-wrap { max-height: 560px; overflow: auto; -webkit-overflow-scrolling: touch; border-radius: 0 0 var(--r) var(--r); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .scrolly table { min-width: 720px; }
+  .row-idx { color: #cbd5e1; font-size: 12px; width: 30px; text-align: left; padding-right: 4px; }
+  thead th { position: sticky; top: 0; background: #f8fafc; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; padding: 10px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); z-index: 2; font-weight: 600; }
+  thead th.l, tbody td.l { text-align: left; }
+  tbody tr { border-bottom: 1px solid #f1f5f9; cursor: pointer; transition: background .1s; }
+  tbody tr:hover { background: var(--brand-soft); }
+  tbody td { padding: 10px 12px; text-align: right; white-space: nowrap; vertical-align: middle; font-variant-numeric: tabular-nums; }
+  tbody td.l { white-space: normal; text-align: left; }
+  .cell-main { font-weight: 700; color: var(--brand); }
+  .cell-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.5; }
+  .pill.g { background: var(--green-bg); color: var(--green); }
+  .pill.a { background: var(--amber-bg); color: var(--amber); }
+  .pill.r { background: var(--red-bg); color: var(--red); }
+  .pill.b { background: var(--blue-bg); color: var(--blue); }
+  .pill.n { background: #f1f5f9; color: var(--muted); }
+  .muted { color: var(--muted); font-size: 12px; }
+  .trend { display: inline-flex; align-items: center; height: 24px; }
+  .trend svg { display: block; }
+
+  /* SBF chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { background: var(--brand-soft); color: var(--brand-dark); border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 500; }
+  .chip.g { background: var(--green-bg); color: #166534; }
+  .chip.r { background: var(--red-bg); color: #991b1b; }
+  .chip.a { background: var(--amber-bg); color: #92400e; }
+  .chip.n { background: #f1f5f9; color: var(--muted); }
+  .chips.plan-sbf { cursor: pointer; }
+  .chips.plan-sbf.clamped .chip { display: none; }
+  .chips.plan-sbf.clamped .chip:nth-child(-n+4) { display: inline-flex; }
+  .chips.plan-sbf.clamped .toggle-tip { display: inline-flex; }
+  .chips.plan-sbf.clamped.expanded .chip { display: inline-flex; }
+
+  /* Customer detail */
+  .cust-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; grid-column: 1 / -1; }
+  .cust-head h2 { font-size: 18px; font-weight: 800; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cust-head .meta-line { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .history-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .scrolly { border-radius: var(--r); overflow: auto; -webkit-overflow-scrolling: touch; }
+  .history-table th, .history-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  .history-table th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; background: #f8fafc; white-space: nowrap; }
+  .status-badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .st-achieved { background: var(--green-bg); color: #166534; }
+  .st-open { background: var(--red-bg); color: #991b1b; }
+  .st-new { background: var(--amber-bg); color: #92400e; }
+  .st-mixed { background: var(--blue-bg); color: #1e40af; }
+  .empty { padding: 30px; text-align: center; color: var(--muted); font-size: 13px; }
+  .label-tag { font-size: 10px; background: #f1f5f9; color: var(--muted); padding: 3px 8px; border-radius: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
+
+  /* Navigation (sidebar) */
+  .navrow { display: flex; flex-direction: column; gap: 12px; padding-top: 2px; }
+  .navbtns { display: flex; gap: 8px; }
+  .navbtns .btn { flex: 1; justify-content: center; }
+  .hint-btn { font-size: 12px; color: var(--muted); }
+  @media (max-width: 960px) {
+    .navrow { flex-direction: row; flex-wrap: wrap; align-items: flex-end; }
+  }
+  @media (max-width: 560px) {
+    .navrow { flex-direction: column; align-items: stretch; }
+  }
+
+  /* Filters (sidebar) */
+  .filters .f-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
+  .filters .f-head h3 { margin-bottom: 0; font-size: 13px; }
+  .filters-grid { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding-top: 12px; }
+  .fg { display: flex; flex-direction: column; gap: 6px; }
+  .fg label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; font-weight: 600; }
+  .fg .range { display: flex; align-items: center; gap: 6px; }
+  select.fs { padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; font-size: 13px; background: #fff; color: var(--ink); outline: none; font-family: inherit; min-width: 0; width: 100%; transition: border-color .15s, box-shadow .15s; }
+  select.fs:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+  .filters .fg .btns { display: flex; gap: 8px; }
+  .filters .fg .btns .btn { flex: 1; justify-content: center; }
+  .fg.block { flex-basis: 100%; }
+  .dcal-head { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .dcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .dcal-void { min-height: 34px; }
+  .dcal-cell { position: relative; min-height: 34px; border: 1px solid var(--line); border-radius: 8px; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; transition: all .12s; }
+  .dcal-cell b { font-weight: 700; line-height: 1.2; }
+  .dcal-cell i { font-style: normal; font-size: 8px; color: var(--muted); letter-spacing: .2px; }
+  .dcal-cell.dim { color: #cbd5e1; background: #f8fafc; cursor: default; }
+  .dcal-cell:hover:not(.dim) { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-soft); }
+  .dcal-cell.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .dcal-cell.on i { color: #e0e7ff; }
+  .dcal-cell.on::after { content: "✓"; position: absolute; top: 0; right: 3px; font-size: 10px; }
+  .dcal-note { font-size: 10px; color: var(--muted); line-height: 1.45; }
+  .filters.on { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft), var(--shadow); }
+  #filterSummary { color: var(--muted); font-weight: 600; }
+  @media (max-width: 960px) {
+    .filters-grid { flex-direction: row; flex-wrap: wrap; }
+    .fg { flex: 1 1 210px; }
+    select.fs { width: 100%; }
+  }
+  @media (max-width: 560px) {
+    .filters-grid { flex-direction: column; }
+  }
+
+  /* Scrollbars */
+  .tbl-wrap::-webkit-scrollbar, .scrolly::-webkit-scrollbar, #chartBox::-webkit-scrollbar { height: 8px; width: 8px; }
+  .tbl-wrap::-webkit-scrollbar-thumb, .scrolly::-webkit-scrollbar-thumb, #chartBox::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+  /* Simple-English explainer popup */
+  .kpi { cursor: pointer; position: relative; }
+  .x-i { display: inline-block; width: 14px; height: 14px; line-height: 13px; text-align: center; font-size: 10px; font-weight: 700; border-radius: 50%; background: #e2e8f0; color: var(--muted); margin-left: 6px; vertical-align: 1px; cursor: pointer; }
+  .ex-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+  .ex-overlay.on { display: flex; }
+  .ex-box { background: #fff; border-radius: 14px; padding: 22px 24px; max-width: 540px; width: 100%; box-shadow: 0 20px 50px rgba(15,23,42,.35); max-height: 86vh; overflow: auto; }
+  .ex-box h3 { margin: 0 40px 10px 0; font-size: 16px; }
+  .ex-box .ex-title { position: relative; }
+  .ex-close { position: absolute; top: 0; right: 0; border: 0; background: #f1f5f9; color: var(--muted); width: 28px; height: 28px; border-radius: 50%; font-size: 15px; cursor: pointer; }
+  .ex-close:hover { background: #e2e8f0; }
+  .ex-box p { margin: 8px 0; font-size: 13.5px; line-height: 1.6; color: #334155; }
+  .ex-box .ex-facts { background: #f8fafc; border: 1px solid var(--line); border-radius: 9px; padding: 10px 14px; margin-top: 12px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+  .ex-box .ex-facts b { color: var(--ink); }
+  .ex-box .ex-sub { margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 700; }
+
+  /* Customer timeline (plain-English, date by date) */
+  .timeline { list-style: none; margin: 4px 0 0; padding: 0; }
+  .timeline li { position: relative; padding: 7px 0 7px 22px; font-size: 13.5px; line-height: 1.55; color: #334155; border-bottom: 1px dashed var(--line); }
+  .timeline li:last-child { border-bottom: 0; }
+  .timeline li::before { content: ""; position: absolute; left: 4px; top: 14px; width: 9px; height: 9px; border-radius: 50%; background: var(--brand); }
+  .timeline b { color: var(--ink); }
+
+  /* Lock screen (shown until the correct password unlocks the dashboard) */
+  .lock { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, #eef2ff 0%, #f8fafc 100%); padding: 20px; }
+  .lock-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-lg); padding: 34px 30px 26px; width: 100%; max-width: 380px; text-align: center; }
+  .lock-badge { width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 14px; background: var(--brand-soft); color: var(--brand); display: flex; align-items: center; justify-content: center; }
+  .lock-badge svg { width: 28px; height: 28px; }
+  .lock-card h2 { font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
+  .lock-card p { font-size: 13px; color: var(--muted); margin: 8px 0 18px; line-height: 1.5; }
+  .lock-card input[type="password"] { width: 100%; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; font-size: 15px; outline: none; font-family: inherit; color: var(--ink); letter-spacing: .08em; transition: border-color .15s, box-shadow .15s; }
+  .lock-card input[type="password"]:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+  .lock-card input[type="password"]::placeholder { letter-spacing: 0; color: #94a3b8; }
+  .lock-err { min-height: 18px; margin-top: 9px; font-size: 12.5px; color: var(--red); font-weight: 600; }
+  .lock-card .btn { width: 100%; justify-content: center; margin-top: 4px; }
+  .lock-card .btn:disabled { opacity: .6; cursor: not-allowed; }
+  .lock-state { margin-top: 12px; font-size: 12px; color: var(--muted); min-height: 16px; }
+  .lock-card .hint { font-size: 11.5px; color: var(--muted); margin-top: 16px; line-height: 1.55; border-top: 1px dashed var(--line); padding-top: 12px; }
+  .layout.locked { display: none; }
+  .lock.off { display: none; }
+
+  /* Print */
+  @media print {
+    body { background: #fff; }
+    .sidebar, .stools, .tbl-tools .search, .sfoot { display: none !important; }
+    .topbar, .navrow { display: none !important; }
+    .lock { display: none !important; }
+    .layout { display: block; }
+    .content { max-width: 100%; padding: 0; }
+    .card, .kpi { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; }
+    .tbl-wrap { max-height: none; overflow: visible; }
+    .scrolly, table { overflow: visible; }
+    thead th { position: static; }
+    tbody tr { cursor: default; }
+    .no-print { display: none !important; }
+  }
+
+  /* Enhanced mobile responsiveness */
+  @media (max-width: 960px) {
+    .btn { min-height: 42px; }
+    .crumb { padding: 4px 7px; }
+    .dcal-cell, .dcal-void { min-height: 40px; }
+    .dcal-cell b { font-size: 13px; }
+    .filters .f-head h3 { font-size: 13px; }
+  }
+  @media (max-width: 640px) {
+    .topbar { gap: 10px; padding: 12px 14px; }
+    .content { padding: 12px 12px 72px; }
+    .card { padding: 14px; }
+    .kpis { gap: 10px; }
+    .kpi { padding: 12px 13px; min-height: 78px; }
+    .kpi .lbl { font-size: 10px; }
+    .kpi .val { font-size: 21px; }
+    .navbtns { gap: 6px; }
+    .crumbs { margin-bottom: 12px; }
+    .tbl-tools { gap: 8px; padding: 10px 12px; align-items: center; }
+    .tbl-tools .search { order: 10; flex: 1 1 100%; }
+    .tbl-tools .cnt { order: 5; }
+    .ttr { flex-wrap: wrap; align-items: center; }
+    .tbl-wrap { max-height: 62vh; }
+    .chip { padding: 4px 9px; }
+    #chartBox svg { min-width: 0; }
+    .history-table { font-size: 12px; }
+    .status-badge { font-size: 10px; padding: 2px 6px; }
+    .dcal-cell i { font-size: 7px; }
+  }
+  @media (max-width: 400px) {
+    .content { padding: 10px 10px 60px; }
+    .kpi { padding: 10px 11px; min-height: 70px; }
+    .kpi .val { font-size: 18px; }
+    .kpi .sub { font-size: 10px; }
+    .search { font-size: 12px; }
+    .fg label { font-size: 10px; }
+    .lock-card { padding: 26px 20px 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="lock" id="lockScreen" aria-label="Dashboard locked">
+  <div class="lock-card">
+    <div class="lock-badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    </div>
+    <h2>Dashboard locked</h2>
+    <p>This dashboard is protected. Enter the password to view it.</p>
+    <input type="password" id="pwd" placeholder="Password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" aria-label="Password">
+    <div class="lock-err" id="pwdErr"></div>
+    <button class="btn primary" id="unlockBtn" onclick="unlock()" type="button">Unlock</button>
+    <div class="lock-state" id="lockState"></div>
+    <div class="hint">Contact the person who shared this dashboard if you do not have the password.</div>
+  </div>
+</div>
+<div class="layout locked" id="layout">
+
+  <header class="topbar" id="topbar">
+    <div class="sbrand">
+      <div class="title">
+        <h1>Easy SBF Deep-Dive Dashboard</h1>
+      </div>
+    </div>
+
+    <div class="stools">
+      <button class="btn primary" onclick="exportCSV()" title="Download current view as CSV">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span class="lbl">Download CSV</span>
+      </button>
+      <button class="btn" onclick="window.print()" title="Print this view">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        <span class="lbl">Print</span>
+      </button>
+    </div>
+
+    <nav class="navrow" id="navRow"></nav>
+  </header>
+
+  <div class="layout-body">
+
+  <aside class="sidebar" id="sidebar">
+    <div class="card filters" id="filtersCard">
+      <div class="f-head">
+        <h3>Period &amp; Data Filters <span class="hint" id="filterSummary">Showing all periods and channels</span></h3>
+      </div>
+      <div class="filters-grid">
+        <div class="fg">
+          <label>Cluster</label>
+          <select id="hierCluster" class="fs" title="Filter by cluster" onchange="onHierChange(0)"></select>
+        </div>
+        <div class="fg">
+          <label>ASM</label>
+          <select id="hierAsm" class="fs" title="Filter by ASM" onchange="onHierChange(1)"></select>
+        </div>
+        <div class="fg">
+          <label>Branch</label>
+          <select id="hierBranch" class="fs" title="Filter by branch" onchange="onHierChange(2)"></select>
+        </div>
+        <div class="fg block">
+          <label>Dates <span class="hint-btn">select single or many dates</span></label>
+          <div id="dateCal" class="dcal"></div>
+        </div>
+        <div class="fg">
+          <label>Channel</label>
+          <select id="chanSel" class="fs" title="Filter by channel"></select>
+        </div>
+        <div class="fg">
+          <label>&nbsp;</label>
+          <span class="btns">
+            <button class="btn primary" onclick="applyFilters()" title="Apply filters">Apply</button>
+            <button class="btn" onclick="resetFilters()" title="Clear all filters">Reset</button>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sfoot">Generated by build_dashboard.py<br>Sources: Name Master / Calls Plan / Easy SBF Gap history / Achieved SBF history / analytics snapshots</div>
+  </aside>
+
+  <main class="content">
+    <div class="crumbs" id="crumbs"></div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card no-print">
+      <h3>Plan vs Achieved — Easy SBF Gap over time <span class="legend" id="chartLegend"></span></h3>
+      <div id="chartBox"></div>
+    </div>
+
+    <div id="main"></div>
+    <div id="brands"></div>
+  </main>
+
+  </div>
+
+</div>
+
+<div class="ex-overlay" id="exOverlay" onclick="if(event.target===this)closeExplain()">
+  <div class="ex-box" role="dialog" aria-label="Explanation">
+    <div class="ex-title"><h3 id="exTitle"></h3><button class="ex-close" onclick="closeExplain()" title="Close">✕</button></div>
+    <div id="exBody"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+let DATA = null;
+let OLDEST_PLAN_DATE = "";
+let OPENING_MONTH = "";
+
+// ---------- helpers ----------
+const fmt = n => n == null ? "0" : Number(n).toLocaleString("en-IN");
+const short = s => s ? s : "—";
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function dates(sorted){ return sorted.map(d => d.slice(5).replace("-","-")); }
+
+// ---------- state ----------
+let path = [];          // array of {type:'name'|'asm'|'branch'|'dse', key}
+let filter = "";
+let custRow = null;     // customer record being viewed
+let filters = { dates: [], channel: "", cluster: "", asm: "", branch: "" };
+let selDates = [];
+const metricsCache = new Map();
+let dnameMap = {};
+
+// dse code -> display label "Name (Code)"
+function dseDisplay(key){
+  const dn = dnameMap[key];
+  return (dn && dn !== key) ? dn + " (" + key + ")" : key;
+}
+
+// AR helpers
+function arPill(s){
+  const low = String(s || "").toLowerCase();
+  const cls = low.indexOf("delivered") >= 0 ? "g"
+            : low.indexOf("yet") >= 0 ? "a"
+            : low.indexOf("with") >= 0 ? "r" : "n";
+  return `<span class="pill ${cls}">${esc(s)}</span>`;
+}
+function arPrimary(ar){
+  if (!ar || !ar.status || ar.status.length === 0) return null;
+  return ar.status[0].s;
+}
+
+// ---------- filters ----------
+const ev = id => document.getElementById(id);
+const day = d => String(d == null ? "" : d).slice(0, 10);
+const sc = v => String(v == null ? "" : v);
+let LEVELS = [];
+let hierPath = {};   // dse -> [cluster, asm, branch, dse] (built in init after unlock)
+function buildHierPath(){
+  hierPath = {};
+  (function walk(node, trail){
+    const kids = node.kids || [];
+    if (kids.length === 0){ hierPath[node.name] = trail.concat([node.name]); return; }
+    for (const k of kids) walk(k, trail.concat([k.name]));
+  })(DATA.tree, []);
+}
+function hiLevel(c, lvl){
+  const p = hierPath[c] || [];
+  return p[lvl] || "";
+}
+function hierOK(c){
+  const cl = hiLevel(c.dse, 0), as = hiLevel(c.dse, 1), br = hiLevel(c.dse, 2);
+  if (filters.cluster && cl !== filters.cluster) return false;
+  if (filters.asm && as !== filters.asm) return false;
+  if (filters.branch && br !== filters.branch) return false;
+  return true;
+}
+function custOK(c){ return chanOK(c) && hierOK(c) && customerHasData(c) && searchOK(c); }
+function filtersActive(){
+  return !!(filters.dates.length > 0 || filters.channel ||
+            filters.cluster || filters.asm || filters.branch);
+}
+function anyFilterActive(){
+  return filtersActive() || !!(filter && String(filter).trim());
+}
+function dateOK(x){ const ds = filters.dates; return !ds.length || ds.indexOf(day(x)) >= 0; }
+function inPlan(d){ return dateOK(d); }
+function inAch(d){ return dateOK(d); }
+function chanOK(c){ return !filters.channel || sc(c.channel) === filters.channel; }
+function normQ(s){ return String(s == null ? "" : s).trim().toLowerCase(); }
+// Global search matches customer fields, its hierarchy path and every easy-SBF
+// item (plan / opening / achieved) attached to the customer. Case-insensitive,
+// partial, whitespace-trimmed, null-safe.
+function searchOK(c){
+  const q = normQ(filter);
+  if (!q) return true;
+  const hay = [c.name, c.ret, c.dse, c.dse_name, c.channel, ...(hierPath[c.dse] || [])];
+  for (const b of (c.opening || [])) hay.push(b);
+  for (const d in c.plan || {}){
+    const p = c.plan[d] || {};
+    for (const b of (p.sbf || [])) hay.push(b);
+  }
+  for (const d in c.ach || {}){
+    const a = c.ach[d] || {};
+    for (const b of (a.achieved_sbf || [])) hay.push(b);
+    for (const b of (a.open_sbf || [])) hay.push(b);
+    for (const b of (a.new_sbf || [])) hay.push(b);
+  }
+  for (const f of hay){
+    if (normQ(f).indexOf(q) >= 0) return true;
+  }
+  return false;
+}
+// A customer is only kept under a date filter when it has a real plan or
+// achieved record on one of the selected dates. Records that exist with zero
+// values are still kept (a genuine zero); only customers with NO source record
+// for the selected dates are excluded.
+function customerHasData(c){
+  if (!filters.dates.length) return true;
+  for (const d in c.plan || {}) if (inPlan(d)) return true;
+  for (const d in c.ach || {}) if (inAch(d)) return true;
+  return false;
+}
+function hasMetrics(m){
+  if (!m) return false;
+  return (m.dse||0) + (m.cust||0) + (m.planGap||0) + (m.planEasy||0) + (m.ach||0) +
+         (m.open||0) + (m.new||0) + (m.hist||0) + (m.arBal||0) > 0;
+}
+
+// Per-customer stats within the active filters (cache for 0.5s is unnecessary —
+// filtering 28k rows is cheap; cache per query instead on metrics)
+function custStats(c){
+  const s = { planGap: 0, planEasy: 0, achieved: 0, open: 0, new: 0, hist: 0, planDateCount: 0,
+              latestDate: "", latestEasy: 0, latestSbf: [], plan: {}, ach: {}, byDate: {}, arBal: 0 };
+  if (c.ar) s.arBal = c.ar.balance || 0;
+  for (const d in c.plan || {}){
+    if (!inPlan(d)) continue;
+    const p = c.plan[d] || {};
+    const easy = p.easy || 0, total = p.total || 0;
+    s.planGap += total; s.planEasy += easy; s.planDateCount++;
+    s.plan[d] = { easy, total, sbf: p.sbf || [] };
+    const slot = s.byDate[d] = s.byDate[d] || { planGap: 0, planEasy: 0, ach: 0, open: 0, new: 0, hist: 0 };
+    slot.planGap += total; slot.planEasy += easy;
+    if (day(d) > s.latestDate){ s.latestDate = day(d); s.latestEasy = easy; s.latestSbf = p.sbf || []; }
+  }
+  for (const d in c.ach || {}){
+    if (!inAch(d)) continue;
+    const a = c.ach[d] || {};
+    s.achieved += a.achieved || 0; s.open += a.open || 0; s.new += a.new || 0; s.hist += a.historical || 0;
+    s.ach[d] = { achieved: a.achieved || 0, open: a.open || 0, new: a.new || 0, status: a.status || "",
+                 achieved_sbf: a.achieved_sbf || [], open_sbf: a.open_sbf || [], new_sbf: a.new_sbf || [] };
+    const slot = s.byDate[d] = s.byDate[d] || { planGap: 0, planEasy: 0, ach: 0, open: 0, new: 0, hist: 0 };
+    slot.ach += a.achieved || 0; slot.open += a.open || 0; slot.new += a.new || 0; slot.hist += a.historical || 0;
+  }
+  return s;
+}
+
+function emptyMetrics(){ return { dse: 0, cust: 0, planGap: 0, planEasy: 0, ach: 0, open: 0, new: 0, hist: 0, arBal: 0, byDate: {} }; }
+function emptySlot(){ return { planGap: 0, planEasy: 0, ach: 0, open: 0, new: 0, hist: 0 }; }
+
+function statsToMetrics(statsList){
+  const m = emptyMetrics();
+  const dseSet = new Set();
+  for (const it of statsList){
+    dseSet.add(it.dse); m.cust++;
+    m.planGap += it.stats.planGap; m.planEasy += it.stats.planEasy;
+    m.ach += it.stats.achieved; m.open += it.stats.open; m.new += it.stats.new; m.hist += it.stats.hist;
+    m.arBal += it.stats.arBal || 0;
+    for (const d in it.stats.byDate){
+      const slot = m.byDate[d] = m.byDate[d] || emptySlot();
+      const src = it.stats.byDate[d];
+      slot.planGap += src.planGap; slot.planEasy += src.planEasy; slot.ach += src.ach;
+      slot.open += src.open; slot.new += src.new; slot.hist += src.hist;
+    }
+  }
+  m.dse = dseSet.size;
+  return m;
+}
+
+function collectStats(node, out){
+  out = out || [];
+  const kids = node.kids || [];
+  if (kids.length === 0){
+    const dse = node.name;
+    for (const ret of DATA.dse_customers[dse] || []){
+      const c = DATA.customers[dse + "|" + ret];
+      if (c && custOK(c)) out.push({ dse, stats: custStats(c) });
+    }
+    return out;
+  }
+  for (const k of kids) collectStats(k, out);
+  return out;
+}
+
+// ---------- brand (easy-SBF item) summary ----------
+// A "brand" is one distinct easy-SBF item. For a given scope we count how many
+// customers planned it, achieved it, and still have it open. A customer counts
+// once per brand (dedup across its visit dates).
+// The "Total gap" (planned) count is LOCKED to the OPENING snapshot (baseline,
+// from the monthly Opening_Easy_SBF file); later daily plan files added by daily
+// runs do NOT move it. Achieved and Balance keep accumulating from the whole
+// achieved history.
+function addCustomerBrands(c, out){
+  const planned = {}, achieved = {}, gap = {};
+  if (c.opening && c.opening.length){
+    for (const b of c.opening) if (b) planned[b] = 1;
+  } else if (OLDEST_PLAN_DATE && (c.plan || {})[OLDEST_PLAN_DATE] && inPlan(OLDEST_PLAN_DATE)){
+    for (const b of (c.plan[OLDEST_PLAN_DATE].sbf || [])) if (b) planned[b] = 1;
+  }
+  for (const d in c.ach || {}){
+    if (!inAch(d)) continue;
+    for (const b of (c.ach[d].achieved_sbf || [])) if (b) achieved[b] = 1;
+    for (const b of (c.ach[d].open_sbf || [])) if (b) gap[b] = 1;
+  }
+  for (const b in planned){ const s = out[b] = out[b] || { planned: 0, achieved: 0, gap: 0 }; s.planned++; }
+  for (const b in achieved){ const s = out[b] = out[b] || { planned: 0, achieved: 0, gap: 0 }; s.achieved++; }
+  for (const b in gap){ const s = out[b] = out[b] || { planned: 0, achieved: 0, gap: 0 }; s.gap++; }
+}
+
+function collectBrandStats(node, out){
+  const kids = node.kids || [];
+  if (kids.length === 0){
+    const dse = node.name;
+    for (const ret of DATA.dse_customers[dse] || []){
+      const c = DATA.customers[dse + "|" + ret];
+      if (c && custOK(c)) addCustomerBrands(c, out);
+    }
+    if (!filters.channel && !normQ(filter)){
+      for (const b in (DATA.opening || {})[dse] || {}){
+        const s = out[b] = out[b] || { planned: 0, achieved: 0, gap: 0 };
+        s.planned += DATA.opening[dse][b];
+      }
+    }
+    return;
+  }
+  for (const k of kids) collectBrandStats(k, out);
+}
+
+// Brand table for the current node, respecting filters. When no filters are
+// active we use the precomputed rollup (node.brands) for speed.
+function brandsFor(node, parentPath){
+  if (!anyFilterActive()) return node.brands || {};
+  const key = "B:" + effKeyFor(node, parentPath);
+  if (metricsCache.has(key)) return metricsCache.get(key);
+  const b = {};
+  collectBrandStats(node, b);
+  metricsCache.set(key, b);
+  return b;
+}
+function brandRowCount(bm){
+  return Object.keys(bm).filter(b => (bm[b].planned || bm[b].achieved || bm[b].gap) > 0).length;
+}
+
+function fsig(){ return (filters.dates||[]).sort().join(",") + "|" + filters.channel + "|" + filters.cluster + "|" + filters.asm + "|" + filters.branch + "|" + normQ(filter); }
+function effKeyFor(node, parentPath){
+  return parentPath.map(s => s.type + ":" + s.key).join("/") + "/" + node.name + "|" + fsig();
+}
+function effectiveMetrics(node, parentPath){
+  if (!anyFilterActive()) return node.metrics;
+  const key = effKeyFor(node, parentPath);
+  if (metricsCache.has(key)) return metricsCache.get(key);
+  const m = statsToMetrics(collectStats(node, []));
+  metricsCache.set(key, m);
+  return m;
+}
+function effectiveDseList(dseKey){
+  const out = [];
+  for (const ret of DATA.dse_customers[dseKey] || []){
+    const c = DATA.customers[dseKey + "|" + ret];
+    if (c && custOK(c)) out.push({ c, stats: custStats(c) });
+  }
+  return out.sort((a, b) => b.stats.latestEasy - a.stats.latestEasy || sc(a.c.ret).localeCompare(sc(b.c.ret)));
+}
+
+// ---------- navigation ----------
+const navIcons = {
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+  up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>',
+  reset: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>',
+};
+function buildNav(){
+  ev("navRow").innerHTML =
+    '<div class="navbtns">' +
+      '<button class="btn" onclick="navHome()" title="Back to All Clusters">' + navIcons.home + '<span class="lbl">Home</span></button>' +
+      '<button class="btn" onclick="navUp()" title="Scroll to top of page">' + navIcons.up + '<span class="lbl">Up</span></button>' +
+      '<button class="btn" onclick="navReset()" title="Clear filters, search and go to All Clusters">' + navIcons.reset + '<span class="lbl">Reset</span></button>' +
+    '</div>';
+  dnameMap = {};
+  (function w(node){
+    const kids = node.kids || [];
+    if (kids.length === 0){
+      const dn = node.dname && node.dname !== node.name;
+      if (dn) dnameMap[node.name] = node.dname;
+      return;
+    }
+    for (const k of kids) w(k);
+  })(DATA.tree);
+}
+function navHome(){ go(0); }
+function navUp(){ window.scrollTo({ top: 0, behavior: "smooth" }); }
+function navBack(){ const l = path.length; if (l > 0) go(l - 1); }
+function navReset(){
+  custRow = null;
+  filter = "";
+  path = [];
+  resetFilters();
+}
+function hierOptions(lvl, cl, as){
+  const want = (k) => (!cl || k[0] === cl) && (!as || k[1] === as);
+  const vals = new Set();
+  for (const k in hierPath){ const p = hierPath[k]; if (p[lvl] && want(p)) vals.add(p[lvl]); }
+  return '<option value="">All</option>' + [...vals].sort().map(v => '<option value="' + esc(v) + '">' + esc(v) + '</option>').join("");
+}
+function onHierChange(lvl){
+  const cl = sc(ev("hierCluster").value);
+  const as = sc(ev("hierAsm").value);
+  if (lvl === 0){
+    ev("hierAsm").innerHTML = hierOptions(1, cl, "");
+    ev("hierAsm").value = "";
+    ev("hierBranch").innerHTML = hierOptions(2, cl, "");
+    ev("hierBranch").value = "";
+  } else if (lvl === 1){
+    ev("hierBranch").innerHTML = hierOptions(2, cl, as);
+    ev("hierBranch").value = "";
+  }
+  applyFilters();
+}
+function buildFilters(){
+  ev("hierCluster").innerHTML = hierOptions(0, "", "");
+  ev("hierAsm").innerHTML     = hierOptions(1, "", "");
+  ev("hierBranch").innerHTML  = hierOptions(2, "", "");
+  const chans = new Set(DATA.meta.channels || []);
+  ev("chanSel").innerHTML = '<option value="">All channels</option>' + [...chans].sort().map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join("");
+  renderDateCal();
+}
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+function renderDateCal(){
+  const el = ev("dateCal");
+  if (!el) return;
+  const plan = new Set(DATA.dates.plan || []);
+  const ach  = new Set(DATA.dates.achieved || []);
+  const all = [...new Set([...plan, ...ach])].sort();
+  if (!all.length){ el.innerHTML = '<div class="dcal-note">No dates available</div>'; return; }
+  const months = new Map();
+  for (const d of all){ const k = d.slice(0, 7); if (!months.has(k)) months.set(k, []); months.get(k).push(d); }
+  let html = "";
+  for (const [m, ds] of months){
+    const mm = Number(m.slice(5, 7));
+    html += '<div class="dcal-head">' + MONTH_NAMES[mm-1] + " " + m.slice(0, 4) + '</div>';
+    html += '<div class="dcal-grid">';
+    const firstDow = new Date(Number(m.slice(0,4)), mm - 1, 1).getDay();
+    for (let i = 0; i < firstDow; i++) html += '<span class="dcal-void"></span>';
+    const last = new Date(Number(m.slice(0,4)), mm, 0).getDate();
+    for (let dd = 1; dd <= last; dd++){
+      const iso = m + "-" + String(dd).padStart(2, "0");
+      const hasDay = plan.has(iso) || ach.has(iso);
+      const sel = selDates.indexOf(iso) >= 0;
+      if (hasDay){
+        const mk = (plan.has(iso) && ach.has(iso) ? "P·A" : plan.has(iso) ? "P" : "A");
+        const tip = iso + " — " + (plan.has(iso) ? "plan" : "") + (plan.has(iso) && ach.has(iso) ? " + " : "") + (ach.has(iso) ? "achieved" : "");
+        html += '<span class="dcal-cell' + (sel ? " on" : "") + '" onclick="toggleDate(\'' + iso + '\')" title="' + esc(tip) + '"><b>' + dd + "</b><i>" + mk + "</i></span>";
+      } else {
+        html += '<span class="dcal-cell dim">' + dd + "</span>";
+      }
+    }
+    html += '</div>';
+  }
+  html += '<div class="dcal-note">P = plan · A = achieved · click dates to include them; empty selection = all dates</div>';
+  el.innerHTML = html;
+}
+function toggleDate(iso){
+  const i = selDates.indexOf(iso);
+  if (i >= 0) selDates.splice(i, 1); else selDates.push(iso);
+  applyFilters();
+  renderDateCal();
+}
+function applyFilters(){
+  filters = {
+    dates: selDates.slice().sort(),
+    channel: sc(ev("chanSel").value),
+    cluster: sc(ev("hierCluster").value), asm: sc(ev("hierAsm").value), branch: sc(ev("hierBranch").value),
+  };
+  metricsCache.clear();
+  render();
+}
+function resetFilters(){
+  selDates = [];
+  filters = { dates: [], channel: "", cluster: "", asm: "", branch: "" };
+  ["chanSel", "hierCluster", "hierAsm", "hierBranch"].forEach(id => { ev(id).value = ""; });
+  ev("hierAsm").innerHTML   = hierOptions(1, "", "");
+  ev("hierBranch").innerHTML = hierOptions(2, "", "");
+  renderDateCal();
+  metricsCache.clear();
+  render();
+}
+function filterSummary(){
+  if (!filtersActive()) return "Showing all dates and channels";
+  const ds = (filters.dates && filters.dates.length) ? "Dates: " + dates(filters.dates).join(", ") : "";
+  const ch = filters.channel ? " · Channel: " + filters.channel : "";
+  const h = (filters.cluster || filters.asm || filters.branch) ? " · " + [filters.cluster || "Cluster", filters.asm || "", filters.branch || ""].filter(Boolean).join(" › ") : "";
+  return (ds + ch + h).replace(/^ ·/, "");
+}
+
+// ---------- navigation helpers ----------
+function nodeFromPath(p){
+  let node = DATA.tree;
+  for (const seg of p) {
+    const kid = (node.kids || []).find(k => k.name === seg.key);
+    if (!kid) return null;
+    node = kid;
+  }
+  return node;
+}
+
+function go(clearToLevel){
+  custRow = null;
+  filter = "";
+  const p = path.slice(0, clearToLevel);
+  if (p.length === 0 && clearToLevel === 0) path = [];
+  else path = p;
+  render();
+}
+
+function setPath(newPath){
+  path = newPath;
+  custRow = null;
+  filter = "";
+  render();
+}
+
+// ---------- render ----------
+let renderSeq = 0;
+function leafDsesUnder(node, out){
+  const kids = node.kids || [];
+  if (!kids.length){ out.push(node.name); return out; }
+  for (const k of kids) leafDsesUnder(k, out);
+  return out;
+}
+// Which DSE customer chunks does the upcoming paint need? Without active
+// filters the precomputed tree rollups cover every level; filters/search and
+// DSE drill-downs need real customer records.
+function dsesNeeded(){
+  if (custRow) return [custRow.dse];
+  const node = nodeFromPath(path);
+  if (!node) return [];
+  if (!(node.kids || []).length) return [node.name];
+  if (!anyFilterActive()) return [];
+  return leafDsesUnder(node, []);
+}
+let loadPillEl = null;
+function loadPill(msg){
+  if (!loadPillEl){
+    loadPillEl = document.createElement("div");
+    loadPillEl.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;" +
+      "background:#111827;color:#fff;padding:8px 14px;border-radius:999px;font-size:12px;" +
+      "box-shadow:0 4px 14px rgba(0,0,0,.25);opacity:.95";
+    document.body.appendChild(loadPillEl);
+  }
+  loadPillEl.textContent = msg;
+  loadPillEl.hidden = false;
+}
+function loadPillHide(){ if (loadPillEl) loadPillEl.hidden = true; }
+async function render(){
+  const seq = ++renderSeq;
+  const need = dsesNeeded().filter(d => !custChunks[d]);
+  if (need.length){
+    loadPill("Loading customer data… 0/" + need.length);
+    let done = 0;
+    const bump = () => { done++; loadPill("Loading customer data… " + done + "/" + need.length); };
+    const results = await Promise.allSettled(need.map(d => loadDseChunk(d).then(bump, bump)));
+    loadPillHide();
+    if (seq !== renderSeq) return;
+    if (results.some(r => r.status === "rejected")){
+      metricsCache.clear();
+      console.error("Some customer data chunks failed to load; metrics may be incomplete.");
+    }
+  }
+  renderNow();
+}
+function renderNow(){
+  renderMeta();
+  renderCrumbs();
+  const fc = ev("filtersCard");
+  if (fc && fc.classList && fc.classList.toggle) fc.classList.toggle("on", filtersActive());
+  ev("filterSummary").textContent = filterSummary();
+  if (custRow) { renderCustomer(); return; }
+  const node = nodeFromPath(path);
+  if (!node){ path=[]; render(); return; }
+  // If at a DSE leaf -> show customer list ("easy SBF with customer list")
+  const level = path.length;
+  if ((node.kids || []).length === 0 && level >= 3) { renderDseCustomers(node.name); return; }
+  document.getElementById("chartBox").parentElement.style.display = "block";
+  const m = effectiveMetrics(node, path.slice(0, path.length - 1));
+  renderKpis(m);
+  renderChart(m);
+  renderChildren(node, level, m);
+  renderBrands(node, path.slice(0, path.length - 1));
+}
+
+function renderMeta(){}
+
+function renderCrumbs(){
+  const el = document.getElementById("crumbs");
+  let html = '<span class="crumb" onclick="go(0)">All</span>';
+  const labels = { cluster: "Cluster", asm: "ASM", branch: "Branch", dse: "DSE" };
+  if (custRow){
+    path.forEach((seg, i) => {
+      html += '<span class="sep">›</span><span class="crumb" onclick="setPath(path.slice(0,' + (i+1) + '))">' + esc(seg.type === "dse" ? dseDisplay(seg.key) : seg.key) + '</span>';
+    });
+    html += '<span class="sep">›</span><span class="crumb cur">' + esc(custRow.name || custRow.ret) + '</span>';
+  } else {
+    if (path.length === 0){
+      html += '<span class="sep">›</span><span class="crumb cur">All Clusters</span>';
+    } else {
+      path.forEach((seg, i) => {
+        const last = i === path.length - 1;
+        html += '<span class="sep">›</span>';
+        const label = seg.type === "dse" ? dseDisplay(seg.key) : seg.key;
+        if (last) html += '<span class="crumb cur">' + esc(label) + '</span>';
+        else html += '<span class="crumb" onclick="setPath(path.slice(0,' + (i+1) + '))">' + esc(label) + '</span>';
+      });
+      const cur = ' <span class="label-tag">' + labels[path[path.length-1].type] + '</span>';
+      html += cur;
+    }
+  }
+  el.innerHTML = html;
+}
+
+// Simple-English explainer for KPI cards
+let lastMetrics = null;
+const EXPLAIN = {
+  "DSEs": ["The number of DSEs (sales executives) whose data is shown on this screen.",
+    "Each DSE is counted only once, no matter how many shops they cover. If you are drilled into a Cluster/ASM/Branch, or have applied filters, this shows only the DSEs that still match."],
+  "Customers": ["The number of shops (customers) with plan or achieved data in this view.",
+    "Each shop is counted once. Any filter you apply — dates, channel, or Cluster/ASM/Branch — removes shops that don't match before counting."],
+  "Total Gap (plan)": ["The total number of 'Easy SBF gap' ITEMS that were PLANNED across all shops and visit dates in this view.",
+    "It is the business's target. Every shop-for-a-date in the plan files adds its planned items to this total. These are counts of easy-SBF items, not rupee amounts."],
+  "Easy sbd sku plan": ["The total number of easy-cash SBF ITEMS copied from the PLAN for the selected period.",
+    "This is the 'easy' part of the plan target — how many easy-SBF items were promised to be sold, added up across all shops and dates."],
+  "Easy sbd sku achieved": ["The total number of easy-SBF ITEMS that were actually ACHIEVED (sold) in this view.",
+    "Achieved % below it means: Achieved ÷ Easy SBF (plan) × 100 — what share of the planned items was actually sold."],
+  "Still Open": ["The number of easy-SBF ITEMS that were planned but NOT yet achieved — still pending.",
+    "It is the leftover of the plan: Still Open = Easy sbd sku plan − Easy sbd sku achieved. Open % = Still Open ÷ Easy sbd sku plan × 100."],
+  "Balance": ["The BALANCE of the plan — the number of easy-SBF items that were planned but NOT yet achieved (sold).",
+    "It is the leftover of the target: Balance = Easy sbd sku plan − Easy sbd sku achieved. Balance % = Balance ÷ Easy sbd sku plan × 100."],
+  "New SBF": ["Easy-SBF ITEMS found during the visit that were NOT part of the earlier plan — newly discovered.",
+    "Summed across all shop-visit rows in this view."],
+  "Hist. Gap": ["Historical gap — easy-SBF ITEMS carried over from EARLIER visits that were still not sold at the time of reporting.",
+    "Summed across all rows shown on this screen."],
+  "AR Balance": ["Money that is currently OWED by these customers (aged receivables), from the AR file.",
+    "It is the sum of the outstanding balance amount across all their AR documents. The customer table also shows ageing (how many days the oldest doc has been due) and an AR Status chip (Delivered / Yet to be Delivered / AR With Branch, etc.)."],
+  "Total Easy (plan)": ["For THIS shop: the number of easy-cash SBF ITEMS planned across the visit dates shown on this page.",
+    "Added up from the plan files for this shop (easy portion of each day's plan). These are counts, not rupee amounts."],
+  "Total Gap": ["For THIS shop: the total planned Easy-SBF gap ITEMS across the visit dates shown.",
+    "Added up from the plan files for this shop (the full gap count planned each day)."],
+  "Still open": ["For THIS shop: the number of easy-SBF ITEMS that were planned but not yet achieved.",
+    "It is the leftover of the plan: Still open = Easy (plan) − Achieved. Open % = Still open ÷ Easy SBF (plan) × 100."],
+  "Plan visits": ["The number of visit dates on which THIS shop had a plan in the selected period.",
+    "Each plan file for a date that contains this shop adds one visit."],
+  "Ageing": ["How many days the OLDEST unpaid AR document for this shop has been outstanding.",
+    "From the AR file: the highest 'aging days' across all the shop's documents. Balance is the total still owed."],
+};
+function factsFor(lbl){
+  if (custRow){
+    const c = custRow, s = custStats(c), total = s.planEasy;
+    switch (lbl){
+      case "Total Easy (plan)": return [["Easy SBF planned (this shop)", fmt(s.planEasy)]];
+      case "Total Gap": return [["Planned gap (this shop)", fmt(s.planGap)]];
+      case "Achieved": return [["Achieved (sold)", fmt(s.achieved)], ["Σ Easy SBF (plan)", fmt(total)], ["Achieved %", (total>0?Math.round(100*s.achieved/total):0) + "%"]];
+      case "Still open": return [["Still open", fmt((s.planEasy||0)-s.achieved)], ["Σ Easy SBF (plan)", fmt(total)], ["Open %", (total>0?Math.round(100*((s.planEasy||0)-s.achieved)/total):0) + "%"]];
+      case "New SBF": return [["New SBF", fmt(s.new)]];
+      case "Plan visits": return [["Visit dates with a plan", fmt(s.planDateCount)]];
+      case "AR Balance": return [["AR balance (this shop)", fmt(c.ar ? c.ar.balance : 0)]];
+      case "Ageing": return [["Oldest unpaid doc (days)", c.ar ? c.ar.aging : "—"]];
+    }
+  }
+  const m = lastMetrics || {};
+  const total = m.planEasy || 0;
+  switch (lbl){
+    case "DSEs": return [["DSEs counted in this view", fmt(m.dse)]];
+    case "Customers": return [["Customers counted in this view", fmt(m.cust)]];
+    case "Total Gap (plan)": return [["Planned gap (this view)", fmt(m.planGap)]];
+    case "Easy sbd sku plan": return [["Easy SBF planned (this view)", fmt(m.planEasy)]];
+    case "Easy sbd sku achieved": return [["Achieved (sold)", fmt(m.ach)], ["Σ Easy SBF (plan)", fmt(total)], ["Achieved %", (total>0?Math.round(100*m.ach/total):0) + "%"]];
+    case "Still Open": return [["Still open", fmt((m.planEasy||0)-(m.ach||0))], ["Σ Easy SBF (plan)", fmt(total)], ["Open %", (total>0?Math.round(100*((m.planEasy||0)-(m.ach||0))/total):0) + "%"]];
+    case "Balance": return [["Balance (plan − achieved)", fmt((m.planEasy||0)-(m.ach||0))], ["Σ Easy sbd sku plan", fmt(total)], ["Balance %", (total>0?Math.round(100*((m.planEasy||0)-(m.ach||0))/total):0) + "%"]];
+    case "New SBF": return [["New SBF", fmt(m.new)]];
+    case "Hist. Gap": return [["Historical gap", fmt(m.hist)]];
+    case "AR Balance": return [["AR balance (this view)", fmt(m.arBal)]];
+    default: return [];
+  }
+}
+function explainKpi(lbl){
+  const lines = EXPLAIN[lbl];
+  if (!lines) return;
+  ev("exTitle").textContent = lbl;
+  const tl = (!custRow && kpiTimelineOK(lbl)) ? kpiTimeline() : "";
+  ev("exBody").innerHTML = lines.map(p => "<p>" + esc(p) + "</p>").join("") +
+    (factsFor(lbl).length ? '<div class="ex-facts">' + factsFor(lbl).map(f => "<b>" + esc(f[0]) + ":</b> " + esc(f[1])).join("<br>") + "</div>" : "") +
+    tl;
+  ev("exOverlay").className = "ex-overlay on";
+}
+const TIMELINE_KPIS = ["Total Gap (plan)", "Easy sbd sku plan", "Easy sbd sku achieved", "Still Open", "Balance", "New SBF", "Hist. Gap"];
+function kpiTimelineOK(lbl){ return TIMELINE_KPIS.indexOf(lbl) >= 0; }
+function kpiTimeline(){
+  const bd = (lastMetrics && lastMetrics.byDate) || {};
+  const ds = Object.keys(bd).sort();
+  if (!ds.length) return "";
+  const rows = ds.map(d => {
+    const sl = bd[d] || {};
+    const plan = sl.planEasy||0, ach = sl.ach||0, open = (sl.planEasy||0) - (sl.ach||0);
+    const bits = [];
+    if (plan) bits.push("planned <b>" + fmt(plan) + "</b> easy-SBF items");
+    if (ach) bits.push("achieved <b>" + fmt(ach) + "</b>");
+    if (open) bits.push("still pending <b>" + fmt(open) + "</b>");
+    return '<li>On <b>' + dates([d])[0] + '</b>, ' + (bits.join(", ") || "no data for this date") + '.</li>';
+  }).join("");
+  return '<div class="ex-sub">Timeline — date by date</div><ul class="timeline">' + rows + '</ul>';
+}
+function closeExplain(){ ev("exOverlay").className = "ex-overlay"; }
+
+function renderKpis(m){
+  lastMetrics = m;
+  const total = m.planEasy || 0;
+  const balance = (m.planEasy||0) - (m.ach||0);
+  const achRate = total > 0 ? Math.round(100 * (m.ach||0) / total) : 0;
+  const balRate = total > 0 ? Math.round(100 * balance / total) : 0;
+  const kpis = [
+    { lbl: "Easy sbd sku plan", val: fmt(m.planEasy), cls: "amber" },
+    { lbl: "Easy sbd sku achieved", val: fmt(m.ach), cls: "green", sub: achRate + "% of plan" },
+    { lbl: "Balance", val: fmt(balance), cls: "red", sub: balRate + "% of plan" },
+  ];
+  document.getElementById("kpis").innerHTML = kpis.map(k => `
+    <div class="kpi ${k.cls}" onclick="explainKpi('${esc(k.lbl)}')" title="Click to see how this number is calculated">
+      <div class="lbl">${k.lbl}<span class="x-i">?</span></div>
+      <div class="val">${k.val}</div>
+      ${k.sub ? `<div class="sub">${k.sub}</div>` : ""}
+    </div>`).join("");
+}
+
+// ---------- chart (pure SVG, no deps) ----------
+let currentChartCsv = [];
+function renderChart(m){
+  if (!hasMetrics(m)){
+    document.getElementById("chartBox").innerHTML = '<div class="empty">No data available for the selected filters.</div>';
+    document.getElementById("chartLegend").innerHTML = "";
+    currentChartCsv = [];
+    return;
+  }
+  const byDate = m.byDate || {};
+  const allDates = Object.keys(byDate).sort();
+  // union of plan+achieved+snap dates
+  const planDates = (DATA.dates.plan||[]);
+  const achDates  = (DATA.dates.achieved||[]);
+  const dateSet = [...new Set([...allDates, ...planDates, ...achDates])].sort()
+    .filter(d => !filtersActive() || inPlan(d) || inAch(d));
+  if (dateSet.length === 0){ document.getElementById("chartBox").innerHTML = '<div class="empty">No time-series data</div>'; currentChartCsv=[]; return; }
+
+  const rotateLabels = dateSet.length > 12;
+  const H = 300, padL = 48, padB = rotateLabels ? 64 : 40, padT = 14, padR = 18;
+  // Internal coordinate width grows with the date count so bars and date labels
+  // keep even spacing and stay legible. The SVG is rendered at width:100% so it
+  // always fits the card (no clipping, no horizontal scroll, last date visible).
+  const W = Math.max(820, dateSet.length * 46);
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const rows = dateSet.map(d => ({
+    d, plan: (byDate[d]||{}).planEasy||0,
+    ach: (byDate[d]||{}).ach||0,
+    new: (byDate[d]||{}).new||0,
+  }));
+  const maxV = Math.max(1, ...rows.flatMap(r => [r.plan, r.ach]));
+  const x = i => padL + i * (iw / Math.max(1, rows.length - 1 || 1));
+  const y = v => padT + ih - (v / maxV) * ih;
+
+  let bars = "", lines = "";
+  const slotW = rows.length ? iw / rows.length : iw;
+  rows.forEach((r, i) => {
+    const xc = padL + (i + 0.5) * slotW;
+    const w = 10, g = 2;
+    const mk = (val, cx, fill, opacity, label) => {
+      const x = cx - w / 2;
+      const yy = y(val), hh = ih - (yy - padT);
+      bars += `<rect x="${x}" y="${yy}" width="${w}" height="${hh}" rx="2" fill="${fill}" opacity="${opacity}"><title>${label} ${val}</title></rect>`;
+    };
+    mk(r.plan, xc - (w + g), "#f59e0b", 0.9, "Plan");
+    mk(r.ach,  xc,            "#16a34a", 0.9, "Achieved");
+    const label = dates([r.d])[0];
+    if (rotateLabels){
+      lines += `<text x="${xc}" y="${H-20}" text-anchor="end" font-size="10" fill="#6b7280" transform="rotate(-45 ${xc} ${H-20})">${label}</text>`;
+    } else {
+      lines += `<text x="${xc}" y="${H-18}" text-anchor="middle" font-size="11" fill="#6b7280">${label}</text>`;
+    }
+  });
+
+  // y gridlines
+  let grid = "";
+  const steps = 4;
+  for (let s = 0; s <= steps; s++){
+    const v = Math.round(maxV * s / steps);
+    const yy = y(v);
+    grid += `<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="#eef1f7" stroke-width="1"/>`;
+    grid += `<text x="${padL-8}" y="${yy+4}" text-anchor="end" font-size="10" fill="#9aa3b2">${fmt(v)}</text>`;
+  }
+  grid += `<line x1="${padL}" y1="${padT+ih}" x2="${W-padR}" y2="${padT+ih}" stroke="#cbd5e1" stroke-width="1"/>`;
+
+  const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin meet">${grid}${bars}${lines}</svg>`;
+  document.getElementById("chartBox").innerHTML = svg;
+  document.getElementById("chartLegend").innerHTML =
+    `<span><i class="dot" style="background:#f59e0b"></i> Plan (easy)</span>` +
+    `<span><i class="dot" style="background:#16a34a"></i> Achieved</span>`;
+
+  currentChartCsv = [
+    ["date","plan_easy","achieved","new"],
+    ...rows.map(r => [r.d, r.plan, r.ach, r.new])
+  ];
+}
+
+// ---------- children table ----------
+// Children that actually have data in the current filter/search scope.
+// opening-only nodes and nodes with no metrics are hidden, so no zero-data rows
+// appear when a date / channel / hierarchy / search filter is applied.
+function visibleChildren(node){
+  const kids = node.kids || [];
+  return kids
+    .filter(k => !k.openingOnly)
+    .map(k => ({ k, km: effectiveMetrics(k, path) }))
+    .filter(r => hasMetrics(r.km))
+    .sort((a, b) => (b.km.cust||0) - (a.km.cust||0));
+}
+function renderChildren(node, level, m){
+  const kids = node.kids || [];
+  const rows = visibleChildren(node);
+  const el = document.getElementById("main");
+
+  let html = tableShell();
+  if (rows.length === 0){
+    showMain(tableShellEmpty());
+    return;
+  }
+  html += rows.map((r, i) => childRow(r.k, r.km, i, level)).join("");
+  html += `</table></div></div>`;
+  showMain(html);
+  const rc = document.getElementById("rowCount");
+  if (rc) rc.textContent = rows.length + " of " + kids.length;
+}
+
+// Easy-SBF summary by brand for the current hierarchy scope. Every brand in the
+// whole dataset is listed (zeros where it has no data in this scope).
+let lastBrandsMap = {};
+function renderBrands(node, parentPath){
+  const all = DATA.meta.all_brands || [];
+  const el = document.getElementById("brands");
+  if (!all.length){ if (el) el.innerHTML = ""; return; }
+  const brands = brandsFor(node, parentPath);
+  lastBrandsMap = brands;
+  const scope = path.length === 0 ? "All clusters"
+    : (path[path.length-1].type === "dse" ? dseDisplay(path[path.length-1].key) : path[path.length-1].key);
+  const rows = all.map(b => {
+    const s = brands[b] || { planned: 0, achieved: 0, gap: 0 };
+    const balance = (s.planned || 0) - (s.achieved || 0);
+    return {
+      b,
+      s,
+      balance,
+      hasData: (s.planned || s.achieved || s.gap) > 0,
+      achPct: s.planned > 0 ? Math.round(100 * s.achieved / s.planned) : 0,
+      balPct: s.planned > 0 ? Math.round(100 * balance / s.planned) : 0,
+    };
+  }).filter(r => !anyFilterActive() || r.hasData)
+    .sort((a, b2) => (b2.s.planned - a.s.planned) || (b2.balance - a.balance) || String(a.b).localeCompare(String(b2.b)));
+  const nData = brandRowCount(brands);
+  const html = `<div class="card table-card">
+    <div class="tbl-tools">
+      <div class="tbl-title">
+        <span>Easy SBF summary by brand</span>
+        <span class="x-i" onclick="explainBrandsHeader()" title="Click to see how this table is calculated">?</span>
+        <span class="sub">${esc(scope)}${anyFilterActive() ? ' · filtered' : ''}</span>
+      </div>
+      <span class="cnt">${fmt(nData)} of ${fmt(all.length)} brands have data here</span>
+    </div>
+    <div class="tbl-wrap scrolly">
+    <table>
+      <thead><tr>
+        <th class="l row-idx">#</th>
+        <th class="l">Easy SBF (Brand)</th>
+        <th>opening Easy Sbd gap</th>
+        <th>Achieved</th>
+        <th>Balance</th>
+        <th>Ach %</th>
+        <th>Balance %</th>
+      </tr></thead>
+      ${rows.map((r, i) => `
+        <tr onclick="explainBrandFrom(this)" data-b="${esc(r.b)}" title="Click to see how this brand is calculated">
+          <td class="row-idx">${i+1}</td>
+          <td class="l"><span class="cell-main">${esc(r.b)}</span></td>
+          <td>${fmt(r.s.planned)}</td>
+          <td><span class="pill g">${fmt(r.s.achieved)}</span></td>
+          <td><span class="pill r">${fmt(r.balance)}</span></td>
+          <td><span class="pill g">${r.achPct}%</span></td>
+          <td><span class="pill ${r.balPct >= 50 ? 'r' : r.balPct >= 20 ? 'a' : 'g'}">${r.balPct}%</span></td>
+        </tr>`).join("")}
+    </table>
+    </div></div>`;
+  el.innerHTML = html;
+}
+
+// ---------- brand table explainer (like the KPI cards) ----------
+const BRAND_EXPLAIN = {
+  "opening Easy Sbd gap": "customers who have this easy-SBF item in their opening list (monthly Opening_Easy_SBF snapshot, baseline) in the current scope — locked and never moved by later daily runs.",
+  "Achieved": "customers who actually ACHIEVED (sold) this easy-SBF item in the current scope (accumulated from the achieved history).",
+  "Balance": "the opening Easy Sbd gap minus Achieved — customers who have this easy-SBF item planned but not yet sold it.",
+};
+function brandScopeLabel(){
+  return path.length === 0 ? "All clusters"
+    : (path[path.length-1].type === "dse" ? dseDisplay(path[path.length-1].key) : path[path.length-1].key);
+}
+function explainBrandsHeader(){
+  const scope = brandScopeLabel();
+  const tl = kpiTimeline();
+  ev("exTitle").textContent = "Easy SBF summary by brand — " + scope;
+  ev("exBody").innerHTML =
+    "<p>This table summarises every easy-SBF item (brand) for the current scope: <b>" + esc(scope) + "</b>.</p>" +
+    "<p>For each brand it counts <b>customers</b>, not items. A customer is counted once per brand, even if the brand appears on several visit dates. The three columns come from two sources:</p>" +
+    '<ul class="timeline">' +
+    "<li><b>opening Easy Sbd gap</b> — LOCKED to the OPENING snapshot (baseline, month " + esc(OPENING_MONTH || "") + "): how many customers have this brand in their opening list (monthly Opening_Easy_SBF file). Later daily plan runs do not move it.</li>" +
+    "<li><b>Achieved</b> — from the ACHIEVED files (accumulated history): how many customers sold it (brand in their achieved list).</li>" +
+    "<li><b>Balance</b> — opening Easy Sbd gap minus Achieved: how many customers have this brand planned but not yet sold it.</li>" +
+    "</ul>" +
+    '<div class="ex-facts">' +
+    "<b>opening Easy Sbd gap</b> = " + esc(BRAND_EXPLAIN["opening Easy Sbd gap"]) + "<br>" +
+    "<b>Achieved</b> = " + esc(BRAND_EXPLAIN["Achieved"]) + "<br>" +
+    "<b>Balance</b> = " + esc(BRAND_EXPLAIN["Balance"]) + "<br>" +
+    "<b>Ach %</b> = Achieved ÷ opening Easy Sbd gap × 100 · <b>Balance %</b> = Balance ÷ opening Easy Sbd gap × 100" +
+    "</div>" +
+    tl;
+  ev("exOverlay").className = "ex-overlay on";
+}
+function explainBrandFrom(tr){
+  explainBrand(tr.getAttribute("data-b"));
+}
+function explainBrand(brand){
+  const brands = lastBrandsMap || {};
+  const s = brands[brand] || { planned: 0, achieved: 0, gap: 0 };
+  const balance = (s.planned || 0) - (s.achieved || 0);
+  const achPct = s.planned > 0 ? Math.round(100 * s.achieved / s.planned) : 0;
+  const balPct = s.planned > 0 ? Math.round(100 * balance / s.planned) : 0;
+  const scope = brandScopeLabel();
+  ev("exTitle").textContent = brand + " — " + scope;
+  ev("exBody").innerHTML =
+    "<p>This is how many <b>customers</b> were involved with <b>" + esc(brand) + "</b> in <b>" + esc(scope) + "</b>. A customer is counted once, even if the brand appears on several dates.</p>" +
+    '<ul class="timeline">' +
+    "<li><b>opening Easy Sbd gap:</b> " + fmt(s.planned) + " customers planned this brand in the OPENING snapshot (month " + esc(OPENING_MONTH || "") + ", source: monthly Opening_Easy_SBF file). Locked — later daily plan runs do not change it.</li>" +
+    "<li><b>Achieved customers:</b> " + fmt(s.achieved) + " customers sold it (source: ACHIEVED files, accumulated).</li>" +
+    "<li><b>Balance:</b> " + fmt(balance) + " customers (opening Easy Sbd gap − Achieved) have this brand planned but not yet sold.</li>" +
+    "</ul>" +
+    '<div class="ex-facts">' +
+    "<b>opening Easy Sbd gap:</b> " + fmt(s.planned) + "<br>" +
+    "<b>Achieved customers:</b> " + fmt(s.achieved) + "<br>" +
+    "<b>Balance:</b> " + fmt(balance) + "<br>" +
+    "<b>Achieved %:</b> " + achPct + "%<br>" +
+    "<b>Balance %:</b> " + balPct + "%" +
+    "</div>" +
+    brandTimeline(brand);
+  ev("exOverlay").className = "ex-overlay on";
+}
+function brandTimeline(brand){
+  const node = nodeFromPath(path);
+  if (!node) return "";
+  const key = "BT:" + effKeyFor(node, path.slice(0, path.length - 1)) + "|" + brand + "|" + filter + "|" + custRow;
+  if (metricsCache.has(key)) return metricsCache.get(key);
+  const byDate = {};
+  collectBrandByDate(node, brand, byDate);
+  const html = renderBrandTimelineHtml(byDate);
+  metricsCache.set(key, html);
+  return html;
+}
+function collectBrandByDate(node, brand, out){
+  const kids = node.kids || [];
+  if (kids.length === 0){
+    const dse = node.name;
+    for (const ret of DATA.dse_customers[dse] || []){
+      const c = DATA.customers[dse + "|" + ret];
+      if (!c || !custOK(c)) continue;
+      if (c.opening && c.opening.length && c.opening.indexOf(brand) >= 0){ const t = out["__opening"] = out["__opening"] || { planned: 0, achieved: 0, gap: 0 }; t.planned++; }
+      for (const d in c.plan || {}){ if (!inPlan(d)) continue; if ((c.plan[d].sbf || []).indexOf(brand) >= 0){ const t = out[d] = out[d] || { planned: 0, achieved: 0, gap: 0 }; t.planned++; } }
+      for (const d in c.ach || {}){
+        if (!inAch(d)) continue;
+        if ((c.ach[d].achieved_sbf || []).indexOf(brand) >= 0){ const t = out[d] = out[d] || { planned: 0, achieved: 0, gap: 0 }; t.achieved++; }
+        if ((c.ach[d].open_sbf || []).indexOf(brand) >= 0){ const t = out[d] = out[d] || { planned: 0, achieved: 0, gap: 0 }; t.gap++; }
+      }
+    }
+    if (!filters.channel){
+      const ob = (DATA.opening || {})[dse] || {};
+      if (ob[brand]){ const t = out["__opening"] = out["__opening"] || { planned: 0, achieved: 0, gap: 0 }; t.planned += ob[brand]; }
+    }
+    return;
+  }
+  for (const k of kids) collectBrandByDate(k, brand, out);
+}
+function renderBrandTimelineHtml(byDate){
+  const ds = Object.keys(byDate).sort();
+  if (!ds.length) return "";
+  const rows = ds.map(d => {
+    const s = byDate[d] || {};
+    const bits = [];
+    if (s.planned) bits.push("planned by <b>" + fmt(s.planned) + "</b> customers");
+    if (s.achieved) bits.push("achieved by <b>" + fmt(s.achieved) + "</b>");
+    if (s.gap) bits.push("still open for <b>" + fmt(s.gap) + "</b>");
+    if (d === "__opening") return "<li><b>Opening snapshot (" + esc(OPENING_MONTH || "monthly baseline") + "):</b> " + (bits.join(", ") || "no data") + " — the locked baseline behind the opening Easy Sbd gap.</li>";
+    return "<li>On <b>" + dates([d])[0] + "</b>, " + (bits.join(", ") || "no data for this date") + ".</li>";
+  }).join("");
+  return '<div class="ex-sub">Timeline — date by date</div><ul class="timeline">' + rows + "</ul>";
+}
+
+function onSearchInput(el){
+  filter = el.value;
+  const pos = el.selectionStart != null ? el.selectionStart : (el.value ? el.value.length : 0);
+  const wrap = document.querySelector("#main .tbl-wrap");
+  const st = wrap ? wrap.scrollTop : 0;
+  render();
+  const inp = document.querySelector("#main .search");
+  if (inp){
+    inp.focus();
+    try { inp.setSelectionRange(pos, pos); } catch(e){ inp.select(); }
+  }
+  const wrap2 = document.querySelector("#main .tbl-wrap");
+  if (wrap2) wrap2.scrollTop = st;
+}
+
+function tableShell(){
+  return `<div class="card table-card">
+    <div class="tbl-tools">
+      ${path.length ? `<button class="btn" onclick="navBack()" title="Go back one level">${navIcons.back}<span class="lbl">Back</span></button>` : ""}
+      <input class="search" placeholder="Search…" value="${esc(filter)}" oninput="onSearchInput(this)">
+      <span class="cnt" id="rowCount"></span>
+    </div>
+    <div class="tbl-wrap scrolly">
+    <table>
+      <thead><tr>
+        <th class="l row-idx">#</th>
+        <th class="l">Name</th>
+        <th>DSEs</th>
+        <th>Cust</th>
+        <th>Easy sbd sku plan</th>
+        <th>Easy sbd sku achieved</th>
+        <th>Open</th>
+        <th>Ach%</th>
+        <th>Trend</th>
+      </tr></thead>`;
+}
+
+function sparkline(vals){
+  const W = 80, H = 26, pad = 2;
+  const clean = (vals||[]).map(Number).filter(v => isFinite(v));
+  if (!clean.length) return "—";
+  const max = Math.max(...clean), min = Math.min(...clean);
+  const rng = (max - min) || 1;
+  const px = i => clean.length > 1 ? pad + i * (W - 2*pad) / (clean.length - 1) : (W - pad) / 2;
+  const py = v => pad + (H - 2*pad) - ((v - min) / rng) * (H - 2*pad);
+  if (clean.length === 1) return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><circle cx="${px(0).toFixed(1)}" cy="${py(clean[0]).toFixed(1)}" r="3" fill="#3b82f6"/></svg>`;
+  const pts = clean.map((v,i) => px(i).toFixed(1) + "," + py(v).toFixed(1)).join(" ");
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><polyline points="${pts}" fill="none" stroke="#3b82f6" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+
+function childRow(k, m, i, level){
+  const achPct = m.planEasy > 0 ? Math.round(100*m.ach/m.planEasy) : 0;
+  const trendBytes = Object.keys(m.byDate||{}).sort().slice(-8).map(d => (m.byDate[d].planEasy||0));
+  const trendHtml = `<span class="trend">${sparkline(trendBytes)}</span>`;
+  // level: 0=cluster,1=asm,2=branch,3=dse -> clicking dse (level 3) goes to customers
+  const click = level >= 3 ? `openDse('${escDq(k.name)}')` : `drill('${escDq(k.name)}')`;
+  const dn = k.dname && k.dname !== k.name;
+  const mainName = dn ? k.dname : k.name;
+  const sub = level >= 3 ? `<div class="cell-sub">${dn ? esc(k.name) : "DSE"}</div>` : "";
+  return `<tr onclick="${click}">
+    <td class="row-idx">${i+1}</td>
+    <td class="l"><span class="cell-main">${esc(mainName)}</span>${sub}
+      ${level>=3 ? `<div class="chips">${(m.cust||0)+" customers"} · ${dates(DATA.dates.plan).join(",")}</div>`:""}
+    </td>
+    <td>${fmt(m.dse)}</td>
+    <td>${fmt(m.cust)}</td>
+    <td><b>${fmt(m.planEasy)}</b></td>
+    <td><span class="pill g">${fmt(m.ach)}</span></td>
+    <td><span class="pill r">${fmt((m.planEasy||0) - (m.ach||0))}</span></td>
+    <td><span class="pill g">${achPct}%</span></td>
+    <td>${trendHtml}</td>
+  </tr>`;
+}
+
+function tableShellEmpty(){
+  return `<div class="card table-card"><div class="tbl-tools"><input class="search" value="${esc(filter)}" oninput="onSearchInput(this)"></div><div class="empty">No data available for the selected filters.</div></div>`;
+}
+
+function showMain(html){
+  document.getElementById("main").innerHTML = html;
+}
+
+function escDq(s){ return String(s).replace(/"/g, '\\"'); }
+
+function drill(key){
+  let p = nodeFromPath(path);
+  const kids = (p && p.kids) || [];
+  const typeLabels = ["cluster", "asm", "branch", "dse"];
+  const type = path.length < typeLabels.length ? typeLabels[path.length] : "dse";
+  path = path.concat([{type, key}]);
+  render();
+}
+
+function openDse(dseKey){
+  path = path.concat([{type:"dse", key:dseKey}]);
+  render();
+}
+
+// ---------- DSE view: easy SBF + customer list ----------
+function renderDseCustomers(dseKey){
+  // effectiveDseList already applies date / channel / hierarchy / search filters
+  const list = effectiveDseList(dseKey);
+  const filtered = list;
+
+  // aggregate quick KPIs for the DSE
+  const totalEasy = list.reduce((s,x)=>s+x.stats.planEasy,0);
+  const totalGap = list.reduce((s,x)=>s+x.stats.planGap,0);
+  const ach = list.reduce((s,x)=>s+x.stats.achieved,0);
+  const open = list.reduce((s,x)=>s+x.stats.open,0);
+  const arBal = list.reduce((s,x)=>s+(x.c.ar ? x.c.ar.balance : 0),0);
+  const byDate = {};
+  list.forEach(x => { for (const d in x.stats.byDate){
+    const t = byDate[d] = byDate[d] || { planGap:0, planEasy:0, ach:0, open:0, new:0, hist:0 };
+    const src = x.stats.byDate[d];
+    t.planGap += src.planGap; t.planEasy += src.planEasy; t.ach += src.ach; t.open += src.open; t.new += src.new; t.hist += src.hist;
+  }});
+  renderKpis({ dse:1, cust:list.length, planGap:totalGap, planEasy:totalEasy, ach, open, new:list.reduce((s,x)=>s+x.stats.new,0), hist:list.reduce((s,x)=>s+x.stats.hist,0), arBal, byDate });
+  // no time-series chart at customer-list level
+  document.getElementById("chartBox").parentElement.style.display = "none";
+
+  let html = `<div class="card table-card">
+    <div class="tbl-tools">
+      <div><b>${esc(dseDisplay(dseKey))}</b> · ${list.length} customers · Easy SBF with customer list ${anyFilterActive()?'<span class="label-tag">filtered</span>':""}</div>
+      <div class="ttr">
+        <button class="btn" onclick="navBack()" title="Go back one level">${navIcons.back}<span class="lbl">Back</span></button>
+        <input class="search" placeholder="Search customer…" value="${esc(filter)}" oninput="onSearchInput(this)">
+      </div>
+    </div>
+    <div class="tbl-wrap scrolly">
+    <table>
+      <thead><tr>
+        <th class="l row-idx">#</th>
+        <th class="l">Customer</th>
+        <th>Channel</th>
+        <th>Easy (plan)</th>
+        <th>opening Easy Sbd gap</th>
+        <th>Achieved</th>
+        <th>Balance</th>
+        <th>Open</th>
+        <th>AR Bal</th>
+        <th>Ageing</th>
+        <th>Payment mode</th>
+        <th class="l">Easy SBF (latest plan)</th>
+      </tr></thead>
+      ${filtered.map((x,i)=>`
+        <tr onclick="openCustomer('${escDq(x.c.ret)}')">
+          <td class="row-idx">${i+1}</td>
+          <td class="l"><span class="cell-main">${esc(x.c.name||x.c.ret)}</span><div class="cell-sub">${esc(x.c.ret)}</div></td>
+          <td>${esc(short(x.c.channel))}</td>
+          <td><b>${x.stats.latestEasy}</b></td>
+          <td>${fmt(x.c.opening_gap || 0)}</td>
+          <td><span class="pill g">${x.stats.achieved}</span></td>
+          <td><span class="pill r">${fmt((x.c.opening_gap || 0) - x.stats.achieved)}</span></td>
+          <td><span class="pill r">${fmt((x.stats.planEasy||0) - x.stats.achieved)}</span></td>
+          <td>${x.c.ar ? fmt(x.c.ar.balance) : "—"}</td>
+          <td>${x.c.ar ? x.c.ar.aging + "d" : "—"}</td>
+          <td>${x.c.payment_mode ? `<span class="pill n">${esc(x.c.payment_mode)}</span>` : "—"}</td>
+          <td class="l"><div class="chips">${(x.stats.latestSbf||[]).slice(0,5).map(s=>`<span class="chip">${esc(s)}</span>`).join("")}${(x.stats.latestSbf||[]).length>5?`<span class="chip n">+${x.stats.latestSbf.length-5}</span>`:""}</div></td>
+        </tr>`).join("")}
+    </table>
+    ${filtered.length===0?'<div class="empty">No data available for the selected filters.</div>':""}
+    </div></div>`;
+
+  document.getElementById("main").innerHTML = html;
+  renderBrands(nodeFromPath(path), path.slice(0, path.length - 1));
+  document.querySelector("#kpis").scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+// ---------- Customer view ----------
+function togglePlanSbf(el){
+  const expanded = el.classList.toggle("expanded");
+  const tip = el.querySelector(".toggle-tip");
+  if (tip) tip.textContent = expanded ? "− hide" : "+" + tip.getAttribute("data-more");
+}
+
+function openCustomer(retKey){
+  const key = path[path.length-1].key + "|" + retKey;
+  custRow = DATA.customers[key];
+  if (custRow) render();
+  else alert("Customer record not found: " + key);
+}
+
+function renderCustomer(){
+  const c = custRow;
+  const stats = custStats(c);
+  document.getElementById("chartBox").parentElement.style.display = "block";
+  // Customer-specific chart: plan vs achieved over time
+  const planDates = Object.keys(stats.plan).sort();
+  const achDates = Object.keys(stats.ach).sort();
+  const all = [...new Set([...planDates, ...achDates])].sort();
+  const rows = all.map(d => ({
+    d,
+    plan: (stats.plan[d]||{}).easy||0,
+    planList: (stats.plan[d]||{}).sbf||[],
+    ach: (stats.ach[d]||{}).achieved||0,
+    open: ((stats.plan[d]||{}).easy||0) - ((stats.ach[d]||{}).achieved||0),
+    status: (stats.ach[d]||{}).status||"",
+  }));
+  renderCustChart(rows);
+
+  renderCustKpis(c, stats);
+
+  // Main: plan/achieved history table
+  let html = `
+    <div class="card">
+      <h3>Plan vs Achieved — time frame <span class="hint">grouped by visit/analysis date</span></h3>
+      <div class="scrolly"><table class="history-table">
+        <thead><tr><th>Date</th><th>Plan Easy</th><th>Plan SBF</th><th>Achieved</th><th>Still open</th><th>New</th><th>Status</th></tr></thead>
+        <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td><b>${dates([r.d])[0]}</b></td>
+            <td>${r.plan}</td>
+            <td><div class="chips plan-sbf ${r.planList.length>4?'clamped':''}" onclick="togglePlanSbf(this)" title="Tap to expand/collapse">${r.planList.map(s=>`<span class="chip">${esc(s)}</span>`).join("")}${r.planList.length>4?`<span class="chip n toggle-tip" data-more="${r.planList.length-4}">+${r.planList.length-4}</span>`:""}</div></td>
+            <td><span class="status-badge st-achieved">${r.ach}</span></td>
+            <td><span class="status-badge st-open">${r.open}</span></td>
+            <td>${r.ach===0&&r.open===0?'—':''}${r.ach>0?'✓ ':''}${r.open>0?'✗ ':''}</td>
+            <td>${r.status?`<span class="label-tag">${esc(r.status)}</span>`:"—"}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </div>`;
+
+  // Achieved details: achieved_sbf vs open_sbf vs new_sbf
+  const hasAchDetail = achDates.length > 0;
+  if (hasAchDetail){
+    html += `<div class="card"><h3>Achieved-gap detail (per visit)</h3><div class="scrolly"><table class="history-table"><thead><tr><th>Date</th><th>Achieved SBF</th><th>Still open SBF</th><th>New SBF</th></tr></thead><tbody>`;
+    achDates.forEach(d => {
+      const a = stats.ach[d]||{};
+      html += `<tr>
+        <td><b>${dates([d])[0]}</b></td>
+        <td><div class="chips">${(a.achieved_sbf||[]).map(s=>`<span class="chip g">${esc(s)}</span>`).join("")||"—"}</div></td>
+        <td><div class="chips">${(a.open_sbf||[]).map(s=>`<span class="chip r">${esc(s)}</span>`).join("")||"—"}</div></td>
+        <td><div class="chips">${(a.new_sbf||[]).map(s=>`<span class="chip a">${esc(s)}</span>`).join("")||"—"}</div></td>
+      </tr>`;
+    });
+    html += `</tbody></table></div></div>`;
+  }
+
+  // Snapshots
+  if (c.snap && c.snap.length){
+    html += `<div class="card"><h3>Daily snapshot <span class="hint">analytics enrichment</span></h3>
+      <div class="scrolly"><table class="history-table"><thead><tr><th>Date</th><th>With sale</th><th>Easy sold</th><th>Gap count</th><th>Easy count</th><th>Planned</th><th>Suggested</th></tr></thead><tbody>
+      ${c.snap.sort((a,b)=>a.date.localeCompare(b.date)).map(s=>`
+        <tr><td>${dates([s.date])[0]}</td><td>${s.with_sale}</td><td>${s.easy_sold}</td><td>${s.gap}</td><td>${s.easy}</td><td>${s.planned?'✓':'—'}</td><td>${s.suggested?'✓':'—'}</td></tr>`).join("")}
+      </tbody></table></div></div>`;
+  }
+
+  // AR / Aged receivables
+  if (c.ar && c.ar.balance){
+    const chips = c.ar.status.map(s => arPill(s.s) + ` <span class="muted">${fmt(s.bal)}</span>`).join("");
+    html += `<div class="card">
+      <h3>Aged receivables <span class="hint">balance ${fmt(c.ar.balance)} · max ageing ${c.ar.aging}d · ${c.ar.docs} docs</span></h3>
+      <div class="chips">${chips}</div>
+    </div>`;
+  }
+
+  // Simple-English timeline: one sentence per visit date
+  const tl = all.map(d => {
+    const plan = (stats.plan[d]||{}).easy||0, ach = (stats.ach[d]||{}).achieved||0, open = plan - ach;
+    if (plan === 0 && ach === 0 && open === 0) return "";
+    const bits = [];
+    if (plan) bits.push("planned <b>" + fmt(plan) + "</b> easy-SBF items");
+    if (ach) bits.push("achieved <b>" + fmt(ach) + "</b>");
+    if (open) bits.push("still pending <b>" + fmt(open) + "</b>");
+    return '<li>On <b>' + dates([d])[0] + '</b>, this customer ' + bits.join(", ") + '.</li>';
+  }).filter(Boolean).join("");
+  if (tl) html = `<div class="card"><h3>Customer timeline <span class="hint">plain-English, date by date</span></h3><ul class="timeline">${tl}</ul></div>` + html;
+
+  document.getElementById("main").innerHTML = html;
+  document.getElementById("brands").innerHTML = "";
+}
+
+function renderCustKpis(c, stats){
+  const totalPlan = stats.planEasy;
+  const rate = totalPlan > 0 ? Math.round(100*stats.achieved/totalPlan) : 0;
+  const kpis = [
+    { lbl: "Total Easy (plan)", val: fmt(stats.planEasy), cls: "amber" },
+    { lbl: "Total Gap", val: fmt(stats.planGap), cls: "" },
+    { lbl: "Achieved", val: fmt(stats.achieved), cls: "green", sub: rate + "% of plan" },
+    { lbl: "Still open", val: fmt((stats.planEasy||0) - stats.achieved), cls: "red" },
+    { lbl: "New SBF", val: fmt(stats.new), cls: "blue" },
+    { lbl: "Plan visits", val: fmt(stats.planDateCount), cls: "" },
+    { lbl: "AR Balance", val: fmt(c.ar ? c.ar.balance : 0), cls: "red" },
+    { lbl: "Ageing", val: c.ar ? c.ar.aging + "d" : "—", cls: "" },
+  ];
+  document.getElementById("kpis").innerHTML = `
+    <div class="cust-head">
+      <div>
+        <h2>${esc(c.name||c.ret)} <span class="label-tag">${esc(short(c.ret))}</span></h2>
+        <div class="meta-line">${esc(short(c.dse_name))} · ${esc(short(c.dse))} · Channel ${esc(short(c.channel))}</div>
+      </div>
+      <span class="pill g">Easy SBF focus</span>
+      <button class="btn" onclick="explainCustomer(custRow)" title="Plain-English explanation of these numbers">How is this calculated?</button>
+    </div>` + kpis.map(k => `
+      <div class="kpi ${k.cls}" onclick="explainKpi('${esc(k.lbl)}')" title="Click to see how this number is calculated">
+        <div class="lbl">${k.lbl}<span class="x-i">?</span></div>
+        <div class="val">${k.val}</div>
+        ${k.sub?`<div class="sub">${k.sub}</div>`:""}
+      </div>`).join("");
+}
+
+function explainCustomer(c){
+  const s = custStats(c);
+  const total = s.planEasy;
+  const rate = total > 0 ? Math.round(100*s.achieved/total) : 0;
+  const openLeft = (s.planEasy||0) - s.achieved;
+  const oRate = total > 0 ? Math.round(100*openLeft/total) : 0;
+  ev("exTitle").textContent = "This customer — how the numbers are calculated";
+  const arText = c.ar && c.ar.balance
+    ? `The <b>AR Balance</b> (${fmt(c.ar.balance)}) is the total money still owed by this shop, summed from the AR file. The oldest unpaid document is <b>${c.ar.aging} days</b> old, across ${c.ar.docs} document(s).`
+    : "This shop has no outstanding receivables in the AR file.";
+  const allDates = [...new Set([...Object.keys(s.plan), ...Object.keys(s.ach)])].sort();
+  const dateFacts = allDates.map(d => {
+    const plan = (s.plan[d]||{}).easy||0, ach = (s.ach[d]||{}).achieved||0, open = plan - ach;
+    const bits = [];
+    if (plan) bits.push("planned " + fmt(plan) + " easy-SBF items");
+    if (ach) bits.push("achieved " + fmt(ach));
+    if (open) bits.push("pending " + fmt(open));
+    return "<b>" + dates([d])[0] + ":</b> " + (bits.join(", ") || "no data");
+  }).join("<br>");
+  ev("exBody").innerHTML =
+    "<p>Everything on this page is for <b>" + esc(c.name || c.ret) + "</b> (shop code " + esc(c.ret) + "), under DSE " + esc(short(c.dse_name)) + " (" + esc(c.dse) + "), channel " + esc(short(c.channel)) + ".</p>" +
+    "<p><b>Plan Easy</b> (" + fmt(s.planEasy) + ") is the number of easy-SBF items planned for this shop across its visits, and <b>Total Gap</b> (" + fmt(s.planGap) + ") is its full planned target. Both are counts (not rupee amounts) added up from the plan files, one value per visit date.</p>" +
+    "<p><b>Achieved</b> (" + fmt(s.achieved) + ") is how many easy-SBF items were actually sold (" + rate + "% of its plan). <b>Still open</b> (" + fmt(openLeft) + ", " + oRate + "% of plan) is the plan's leftover: Easy (plan) − Achieved. <b>New SBF</b> (" + fmt(s.new) + ") is easy-SBF items newly found that weren't in the earlier plan.</p>" +
+    "<p>" + arText + "</p>" +
+    (allDates.length ? '<div class="ex-facts">Date by date:<br>' + dateFacts + "</div>" : "");
+  ev("exOverlay").className = "ex-overlay on";
+}
+
+function renderCustChart(rows){
+  if (rows.length === 0){ document.getElementById("chartBox").innerHTML = '<div class="empty">No time-series data for this customer.</div>'; currentChartCsv=[]; return; }
+  const W=820, H=300, padL=48, padB=40, padT=14, padR=14;
+  const iw=W-padL-padR, ih=H-padT-padB;
+  const maxV = Math.max(1, ...rows.map(r=>Math.max(r.plan, r.ach)));
+  let bars="", lines="";
+  const n = rows.length;
+  rows.forEach((r,i)=>{
+    const step = n>1 ? iw/(n-1) : iw;
+    const xc = padL + i*step + (n>1?step/2:0);
+    const ys = [a=>padT+ih-(a/maxV)*ih];
+    const mk = (val,color,label,k) => {
+      const yy=ys[0](val);
+      const x = xc - 4.5 + (k-1)*11;
+      bars+=`<rect x="${x}" y="${yy}" width="9" height="${ih-(yy-padT)}" rx="2" fill="${color}" opacity="0.9"><title>${label} ${val}</title></rect>`;
+    };
+    mk(r.plan,"#f59e0b","Plan",0);
+    mk(r.ach,"#16a34a","Achieved",1);
+    lines+=`<text x="${xc}" y="${H-18}" text-anchor="middle" font-size="11" fill="#6b7280">${dates([r.d])[0]}</text>`;
+  });
+  let grid="";
+  for(let s=0;s<=4;s++){ const v=Math.round(maxV*s/4); const yy=padT+ih-(v/maxV)*ih; grid+=`<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="#eef1f7"/><text x="${padL-8}" y="${yy+4}" text-anchor="end" font-size="10" fill="#9aa3b2">${fmt(v)}</text>`; }
+  grid += `<line x1="${padL}" y1="${padT+ih}" x2="${W-padR}" y2="${padT+ih}" stroke="#cbd5e1"/>`;
+  document.getElementById("chartBox").innerHTML = `<svg viewBox="0 0 ${W} ${H}">${grid}${bars}${lines}</svg>`;
+  document.getElementById("chartLegend").innerHTML =
+    `<span><i class="dot" style="background:#f59e0b"></i> Plan</span><span><i class="dot" style="background:#16a34a"></i> Achieved</span>`;
+  currentChartCsv = [["date","plan","achieved"], ...rows.map(r=>[r.d,r.plan,r.ach])];
+}
+
+// ---------- export ----------
+function exportCSV(){
+  const sep = ",";
+  if (custRow){
+    const stats = custStats(custRow);
+    const lines = [["date","plan_easy","achieved","still_open","new"]];
+    [...new Set([...Object.keys(stats.plan),...Object.keys(stats.ach)])].sort().forEach(d=>{
+      lines.push([d, (stats.plan[d]||{}).easy||0, (stats.ach[d]||{}).achieved||0, ((stats.plan[d]||{}).easy||0) - ((stats.ach[d]||{}).achieved||0), (stats.ach[d]||{}).new||0]);
+    });
+    download("customer_gap.csv", csvLines(lines));
+    return;
+  }
+  const dseNode = nodeFromPath(path);
+  if (dseNode && (dseNode.kids || []).length === 0 && path.length >= 3){
+    const key = dseNode.name;
+    const list = effectiveDseList(key).map(x => ({
+      ret: x.c.ret, name: x.c.name, channel: x.c.channel,
+      total_easy: x.stats.planEasy, total_gap: x.stats.planGap,
+      opening_gap: x.c.opening_gap || 0, balance: (x.c.opening_gap || 0) - x.stats.achieved,
+      achieved: x.stats.achieved, open: (x.stats.planEasy||0) - x.stats.achieved, new: x.stats.new,
+      latest_easy: x.stats.latestEasy, latest_date: x.stats.latestDate,
+      ar_balance: x.c.ar ? x.c.ar.balance : "", ar_aging: x.c.ar ? x.c.ar.aging : "",
+      payment_mode: x.c.payment_mode || "",
+    }));
+    download("dse_customers.csv", csvLines([
+      ["retailer_code","retailer_name","channel","total_easy","total_gap","opening_gap","balance","achieved","still_open","new","latest_easy","latest_date","ar_balance","ar_aging","payment_mode"],
+      ...list.map(c=>[c.ret,c.name||"",c.channel,c.total_easy,c.total_gap,c.opening_gap,c.balance,c.achieved,c.open,c.new,c.latest_easy,c.latest_date,c.ar_balance,c.ar_aging,c.payment_mode])
+    ]));
+    return;
+  }
+  // current children table (same filtered population as the rendered table)
+  const node = nodeFromPath(path);
+  const rows = visibleChildren(node);
+  const isDseLevel = path.length === 3 && rows.length > 0 && (rows[0].k.kids||[]).length === 0;
+  download("drilldown.csv", csvLines(
+    isDseLevel
+      ? [["dse_code","dse_name","customers","easy_sbd_sku_plan","easy_sbd_sku_achieved","still_open"],
+         ...rows.map(r=>[r.k.name, r.k.dname || "", r.km.cust, r.km.planEasy, r.km.ach, (r.km.planEasy||0) - (r.km.ach||0)])]
+      : [["name","dse_count","customers","easy_sbd_sku_plan","easy_sbd_sku_achieved","still_open"],
+         ...rows.map(r=>[r.k.name,r.km.dse,r.km.cust,r.km.planEasy,r.km.ach,(r.km.planEasy||0) - (r.km.ach||0)])]
+  ));
+}
+
+function exportJSON(){
+  download("dashboard_data.json", JSON.stringify(DATA, null, 1));
+}
+
+function csvLines(arr){
+  const s = v => {
+    v = String(v==null?"":v);
+    return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
+  };
+  return arr.map(r=>r.map(s).join(",")).join("\r\n");
+}
+
+function download(name, text){
+  const blob = new Blob(["\ufeff"+text], {type:"text/csv;charset=utf-8;"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 100);
+}
+
+// ---------- init ----------
+function sizeHeader(){
+  const top = document.getElementById("topbar");
+  const hh = (top && top.offsetHeight) ? top.offsetHeight : 0;
+  if (document.documentElement && document.documentElement.style) document.documentElement.style.setProperty("--hdr", hh + "px");
+}
+
+// ---------- secure unlock (split encrypted bundle) ----------
+// build_dashboard.py writes an encrypted bundle next to this page:
+//   dse-data/manifest.json ... KDF params + per-file IVs (contains no secrets)
+//   dse-data/core.bin ........ tree / meta / dates / per-DSE customer index
+//   dse-data/c/<dse>.bin ..... that DSE's customer records (fetched on demand)
+// Every file is raw-deflate compressed BEFORE encryption, then AES-GCM
+// encrypted with a key derived from the password (PBKDF2-SHA256). AAD binds
+// each file to its name so chunks cannot be swapped.
+const DATA_BASE = "dse-data/";
+const AAD_PREFIX = "dgp-dashboard-v2:";
+let MANIFEST = null;
+let AES_KEY = null;
+const custChunks = {};   // dse -> Promise (chunk fetched + merged into DATA.customers)
+
+function b64ToBytes(s){
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function fetchManifest(){
+  const r = await fetch(DATA_BASE + "manifest.json", { cache: "no-cache" });
+  if (!r.ok) throw new Error("manifest HTTP " + r.status);
+  return r.json();
+}
+async function deriveAesKey(pwd){
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pwd), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", hash: "SHA-256", salt: b64ToBytes(MANIFEST.salt), iterations: MANIFEST.iterations },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"]
+  );
+}
+async function decryptFile(rel){
+  const meta = MANIFEST.files[rel];
+  if (!meta) throw new Error("Unknown data file: " + rel);
+  const r = await fetch(DATA_BASE + rel + ".bin");
+  if (!r.ok) throw new Error(rel + " HTTP " + r.status);
+  const ct = new Uint8Array(await r.arrayBuffer());
+  if (typeof DecompressionStream === "undefined"){
+    throw new Error("This browser cannot decompress the data files. Please use a current Chrome, Edge, Firefox or Safari.");
+  }
+  const pt = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: b64ToBytes(meta.iv), additionalData: new TextEncoder().encode(AAD_PREFIX + rel) },
+    AES_KEY,
+    ct
+  );
+  const stream = new Blob([pt]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return JSON.parse(await new Response(stream).text());
+}
+function loadDseChunk(dse){
+  if (!custChunks[dse]){
+    custChunks[dse] = decryptFile("c/" + dse)
+      .then(recs => {
+        if (!DATA.customers) DATA.customers = {};
+        Object.assign(DATA.customers, recs);
+      })
+      .catch(err => { delete custChunks[dse]; throw err; });
+  }
+  return custChunks[dse];
+}
+
+function init(){
+  OLDEST_PLAN_DATE = (DATA.dates && DATA.dates.plan && DATA.dates.plan.length) ? DATA.dates.plan[0] : "";
+  OPENING_MONTH = (DATA.meta && DATA.meta.opening_month) || "";
+  LEVELS = DATA.levels && DATA.levels.length ? DATA.levels : ["cluster", "asm", "branch", "dse"];
+  buildHierPath();
+  buildNav();
+  buildFilters();
+  render();
+  sizeHeader();
+  if (!sizeListenerAttached){
+    if (window.addEventListener) window.addEventListener("resize", sizeHeader);
+    sizeListenerAttached = true;
+  }
+}
+let sizeListenerAttached = false;
+
+let unlocking = false;
+let retryBlocked = false;
+function lockMessage(kind, text){
+  const err = ev("pwdErr");
+  const state = ev("lockState");
+  if (err) err.textContent = "";
+  if (state) state.textContent = "";
+  const el = kind === "err" ? err : state;
+  if (el) el.textContent = text;
+}
+async function unlock(){
+  if (unlocking || retryBlocked) return;
+  const input = ev("pwd");
+  const pwd = input ? input.value : "";
+  lockMessage("", "");
+  if (!pwd){
+    lockMessage("err", "Please enter the password.");
+    if (input) input.focus();
+    return;
+  }
+  if (location.protocol === "file:"){
+    lockMessage("err", "Open this dashboard from its web address (e.g. the Netlify URL) — it cannot run by double-clicking the file.");
+    return;
+  }
+  if (!window.crypto || !window.crypto.subtle){
+    lockMessage("err", "This browser does not support the required security features. Please use a current Chrome, Edge, Firefox or Safari.");
+    return;
+  }
+  const btn = ev("unlockBtn");
+  unlocking = true;
+  if (btn) btn.disabled = true;
+  lockMessage("state", "Unlocking…");
+  try {
+    if (!MANIFEST) MANIFEST = await fetchManifest();
+    AES_KEY = await deriveAesKey(pwd);
+    const data = await decryptFile("core");
+    DATA = data;
+    DATA.customers = DATA.customers || {};
+    const lock = ev("lockScreen");
+    if (lock) lock.classList.add("off");
+    const layout = ev("layout");
+    if (layout) layout.classList.remove("locked");
+    if (input) input.value = "";
+    init();
+  } catch (e){
+    AES_KEY = null;
+    lockMessage("err", "Incorrect password or data files could not be loaded. Please try again.");
+    retryBlocked = true;
+    setTimeout(function(){ retryBlocked = false; }, 700);
+    if (input){ input.value = ""; input.focus(); }
+  } finally {
+    unlocking = false;
+    if (btn) btn.disabled = false;
+  }
+}
+function bindLockScreen(){
+  const input = ev("pwd");
+  if (!input) return;
+  input.addEventListener("keydown", function(e){
+    if (e.key === "Enter"){ e.preventDefault(); unlock(); }
+  });
+  input.focus();
+}
+if (typeof document !== "undefined") bindLockScreen();
+</script>
+</body>
+</html>

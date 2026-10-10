@@ -1,0 +1,20 @@
+# Lean dependency set for the Vercel serverless function (api/index.py).
+#
+# Deliberately excludes pandas / pyarrow / openpyxl-for-ETL: those are only
+# needed by the ETL scripts and the bundle importer, both of which run on the
+# source machine via publish_site.py. Keeping them out keeps the function
+# small enough to deploy and fast to cold-start.
+#
+# openpyxl IS included: the Viewer Activity XLSX export writes a real
+# spreadsheet, and that runs from the browser against the deployed API.
+
+fastapi>=0.115
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+pydantic>=2.7
+pydantic-settings>=2.2
+PyJWT>=2.8
+bcrypt>=4.0
+cryptography>=42.0
+python-multipart>=0.0.9
+openpyxl>=3.1
