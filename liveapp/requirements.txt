@@ -5,8 +5,9 @@ psycopg2-binary>=2.9
 pydantic>=2.7
 pydantic-settings>=2.2
 PyJWT>=2.8
-passlib[bcrypt]>=1.7
 bcrypt>=4.0
+# Needed by services/site_bundle.py to read legacy encrypted bundles.
+cryptography>=42.0
 pandas>=2.2
 openpyxl>=3.1
 pyarrow>=15

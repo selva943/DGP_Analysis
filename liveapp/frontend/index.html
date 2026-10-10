@@ -491,6 +491,15 @@
               <button class="btn ghost" id="processBtn">Run ETL scripts (optional)</button>
             </div>
           </div>
+          <div class="panel-body hidden" id="processHint">
+            <p class="hint" style="margin:0">
+              Server-side ETL is disabled on this deployment: it needs a writable
+              checkout and a long-lived process, which serverless does not provide.
+              To refresh the data, run the pipeline on the machine that holds the
+              project files and publish the result:
+            </p>
+            <div class="log">python publish_site.py</div>
+          </div>
           <div class="panel-body">
             <div class="grid">
               <div class="kpi">

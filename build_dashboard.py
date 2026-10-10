@@ -12,12 +12,12 @@ Data sources (read-only):
 - history/2026/08/*/analytics.parquet ..... daily snapshot enrichment
 
 Output (deploy folder):
-- Output/site/index.html ................ the app shell (no data inside)
-- Output/site/dse-data/manifest.json .... file list + encoding (no secrets)
-- Output/site/dse-data/core.bin ......... tree / meta / dates / DSE customer index
-- Output/site/dse-data/c/<dse>.bin ...... one DSE's customer records (lazy-loaded)
+- output/site/index.html ................ the app shell (no data inside)
+- output/site/dse-data/manifest.json .... file list + encoding (no secrets)
+- output/site/dse-data/core.bin ......... tree / meta / dates / DSE customer index
+- output/site/dse-data/c/<dse>.bin ...... one DSE's customer records (lazy-loaded)
 
-Drag the whole Output/site folder to your host, or zip it with zip_site.py and
+Drag the whole output/site folder to your host, or zip it with zip_site.py and
 import it in the live app.
 
 Access control
@@ -25,7 +25,7 @@ Access control
 The bundle is raw-deflate compressed JSON with no password and no encryption.
 Access is controlled by the live app's login: an authenticated user loads the
 core bundle, and each DSE's customer chunk is fetched on demand the first time
-that DSE is viewed. Never host Output/site on a public URL - serve the data
+that DSE is viewed. Never host output/site on a public URL - serve the data
 through the app, which checks the session on every request.
 """
 
@@ -42,7 +42,7 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent
 UPDATING_DIR = BASE_DIR / "updating_files"
 HISTORY_DIR = BASE_DIR / "history"
-OUTPUT_DIR = BASE_DIR / "Output"
+OUTPUT_DIR = BASE_DIR / "output"
 INPUT_DIR = BASE_DIR / "Input"
 
 HTML_TEMPLATE = BASE_DIR / "_dashboard_template.html"

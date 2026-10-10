@@ -15,7 +15,7 @@ Pipeline
 --------
 1. Resolve the Analysis Visit Date (AUTO = today - 2 calendar days,
    MANUAL = the --date value; the manual date always wins).
-2. Scan History/Easy_SBF_Gap_*.xlsx and select the EARLIEST valid run whose
+2. Scan history/Easy_SBF_Gap_*.xlsx and select the EARLIEST valid run whose
    Target Visit Date equals the analysis date (Run_Info.Target_Visit_Date is
    preferred; Easy_SBF_Gap.visit_date is the fallback). The earliest run is
    the pre-visit baseline; re-runs with refreshed SBD data never change it.
@@ -31,7 +31,7 @@ Pipeline
 6. Classify each historical Easy SBF as ACHIEVED (gone from current No Sale)
    or STILL OPEN (still present). SBFs in today's No Sale that are on the
    Easy SBF master but were not in the historical baseline are NEW.
-7. Write a workbook (Output/ + History/) that is never overwritten.
+7. Write a workbook (output/ + history/) that is never overwritten.
 
 Business rules
 --------------
@@ -66,8 +66,8 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_DIR = BASE_DIR / "Input"
 UPDATING_DIR = BASE_DIR / "updating_files"
-OUTPUT_DIR = BASE_DIR / "Output"
-HISTORY_DIR = BASE_DIR / "History"
+OUTPUT_DIR = BASE_DIR / "output"
+HISTORY_DIR = BASE_DIR / "history"
 
 EASY_SBF_FILE = UPDATING_DIR / "Easy_SBF_List.xlsx"
 NAME_MASTER_FILE = UPDATING_DIR / "Name_master.xlsx"
@@ -134,7 +134,7 @@ python achieved_sbf.py --date DD-MM-YYYY
     Analyse the specified visit date.
 
 python achieved_sbf.py --history-file FILE
-    Use a specific History/Easy_SBF_Gap_*.xlsx file as the baseline,
+    Use a specific history/Easy_SBF_Gap_*.xlsx file as the baseline,
     bypassing the earliest-run auto-selection.
 
 Supported date formats:
@@ -344,7 +344,7 @@ def load_name_master() -> set[str]:
 # ---------------------------------------------------------------------------
 
 def load_history_files() -> list[Path]:
-    """Return all Easy SBF history workbooks in History/."""
+    """Return all Easy SBF history workbooks in history/."""
     if not HISTORY_DIR.is_dir():
         raise CommandError(f"Missing History folder: {HISTORY_DIR}")
     files = sorted(
@@ -845,7 +845,7 @@ def save_workbook(path: Path, output_df: pd.DataFrame, run_info: dict) -> None:
 
 
 def save_output(output_df: pd.DataFrame, run_info: dict) -> tuple[Path, Path]:
-    """Write to Output/ and History/, never overwriting previous analyses."""
+    """Write to output/ and history/, never overwriting previous analyses."""
     name = next_available_name(f"{OUTPUT_FILE_PREFIX}_{run_info['Execution_Timestamp']}")
     output_path = OUTPUT_DIR / f"{name}.xlsx"
     history_path = HISTORY_DIR / f"{name}.xlsx"
@@ -1079,7 +1079,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--history-file",
         default=None,
         metavar="FILE",
-        help="Use a specific History/Easy_SBF_Gap_*.xlsx file instead of "
+        help="Use a specific history/Easy_SBF_Gap_*.xlsx file instead of "
         "auto-selecting the earliest run for the analysis date.",
     )
     parser.add_argument("-h", "--help", action="store_true", dest="show_help")

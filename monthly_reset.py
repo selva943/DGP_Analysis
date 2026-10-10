@@ -4,16 +4,16 @@ Close out the previous month and start a clean one.
 
 Features
 --------
-* Archives every month-stamped workbook in Output/ and History/ whose stamp
+* Archives every month-stamped workbook in output/ and history/ whose stamp
   is not the running month (all 2026MM-* files once the clock ticks into
   the next month).
-* Resets the dashboard build artifacts (Output/site/ and the legacy
-  Output/dashboard.html) so the next build_dashboard.py run rebuilds from
+* Resets the dashboard build artifacts (output/site/ and the legacy
+  output/dashboard.html) so the next build_dashboard.py run rebuilds from
   the new month only.
 * Moves files instead of deleting them. Everything lands in
-  History/archive/<YYYY>/<MM>/, which sits outside every glob used by
-  build_dashboard.py (it only reads top-level History/<prefix>_*.xlsx and
-  History/<YYYY>/*/analytics.parquet), so an archived month can never leak
+  history/archive/<YYYY>/<MM>/, which sits outside every glob used by
+  build_dashboard.py (it only reads top-level history/<prefix>_*.xlsx and
+  history/<YYYY>/*/analytics.parquet), so an archived month can never leak
   back into the dashboard or into achieved_sbf.py's plan matching.
 * Dry run by default. Pass --apply to actually move anything.
 * Safe to repeat: re-running on the same month finds nothing left to do,
@@ -49,7 +49,7 @@ BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "output"
 HISTORY_DIR = BASE_DIR / "history"
 
-# Archived months live here. Must stay a subfolder of History/ so the
+# Archived months live here. Must stay a subfolder of history/ so the
 # top-level globs in build_dashboard.py never pick these files up.
 ARCHIVE_ROOT = HISTORY_DIR / "archive"
 
@@ -71,8 +71,8 @@ MONTHLY_FILE_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 HELP_TEXT = """Close out the previous month and start a clean one.
 
-Moves every month-stamped workbook in Output/ and History/ whose stamp is
-not the running month into History/archive/<YYYY>/<MM>/, then resets the
+Moves every month-stamped workbook in output/ and history/ whose stamp is
+not the running month into history/archive/<YYYY>/<MM>/, then resets the
 dashboard build artifacts so the next build_dashboard.py run reflects only
 the new month.
 
@@ -206,7 +206,7 @@ def resolve_dashboard_month(archived: set[str], current: str) -> str:
 # Archiving
 # ---------------------------------------------------------------------------
 def archive_dir(month_stamp: str) -> Path:
-    """Return History/archive/<YYYY>/<MM> for a month stamp."""
+    """Return history/archive/<YYYY>/<MM> for a month stamp."""
     return ARCHIVE_ROOT / month_stamp[:4] / month_stamp[4:6]
 
 
@@ -362,7 +362,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--keep-dashboard",
         action="store_true",
-        help="Leave Output/site/ and Output/dashboard.html in place.",
+        help="Leave output/site/ and output/dashboard.html in place.",
     )
     return parser.parse_args(argv)
 

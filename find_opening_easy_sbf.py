@@ -30,7 +30,7 @@ Pipeline
 5. Aggregate No Sale reasons per DSE + Retailer customer.
 6. Split No Sale reasons, count total gaps and Easy SBF gaps.
 7. Write a workbook named after the running month (e.g.
-   Opening_Easy_SBF_202608.xlsx) to Output/ and a permanent copy in History/,
+   Opening_Easy_SBF_202608.xlsx) to output/ and a permanent copy in history/,
    never overwriting previous results.
 """
 
@@ -53,8 +53,8 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_DIR = BASE_DIR / "Input"
 UPDATING_DIR = BASE_DIR / "updating_files"
-OUTPUT_DIR = BASE_DIR / "Output"
-HISTORY_DIR = BASE_DIR / "History"
+OUTPUT_DIR = BASE_DIR / "output"
+HISTORY_DIR = BASE_DIR / "history"
 
 NAME_MASTER_FILE = UPDATING_DIR / "Name_master.xlsx"
 EASY_SBF_FILE = UPDATING_DIR / "Easy_SBF_List.xlsx"
@@ -477,7 +477,7 @@ def save_history(path: Path, output_df: pd.DataFrame, run_info: dict) -> None:
 
 
 def save_output(output_df: pd.DataFrame, run_info: dict) -> tuple[Path, Path]:
-    """Write to Output/ and History/, preserving previous history files.
+    """Write to output/ and history/, preserving previous history files.
 
     The filename carries the RUNNING MONTH (e.g. Opening_Easy_SBF_202608).
     Re-runs for the same month get a _1, _2 ... suffix so no previous result

@@ -10,7 +10,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from .config import settings
 
 _connect_args = {}
-if settings.resolved_database_url.startswith("sqlite"):
+if settings.using_sqlite:
     _connect_args = {"check_same_thread": False}
 
 engine = create_engine(

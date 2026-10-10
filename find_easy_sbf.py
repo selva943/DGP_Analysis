@@ -24,7 +24,7 @@ Pipeline
    valid DSE + Retailer relationship (never merging a retailer across DSEs).
 8. Split No Sale reasons, count total gaps and Easy SBF gaps.
 9. Write a workbook named after the target Visit Date (e.g.
-   Easy_SBF_Gap_20260810.xlsx) to Output/ and a permanent copy in History/,
+   Easy_SBF_Gap_20260810.xlsx) to output/ and a permanent copy in history/,
    never overwriting previous results.
 
 Business rule
@@ -58,8 +58,8 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_DIR = BASE_DIR / "Input"
 UPDATING_DIR = BASE_DIR / "updating_files"
-OUTPUT_DIR = BASE_DIR / "Output"
-HISTORY_DIR = BASE_DIR / "History"
+OUTPUT_DIR = BASE_DIR / "output"
+HISTORY_DIR = BASE_DIR / "history"
 
 CALLS_PLAN_FILE = UPDATING_DIR / "Calls_plan.xlsx"
 NAME_MASTER_FILE = UPDATING_DIR / "Name_master.xlsx"
@@ -573,7 +573,7 @@ def save_history(path: Path, output_df: pd.DataFrame, run_info: dict) -> None:
 
 
 def save_output(output_df: pd.DataFrame, run_info: dict) -> tuple[Path, Path]:
-    """Write to Output/ and History/, preserving previous history files.
+    """Write to output/ and history/, preserving previous history files.
 
     The filename carries the TARGET VISIT DATE (e.g. Easy_SBF_Gap_20260810),
     not the execution time. Re-runs for the same date get a _1, _2 ... suffix

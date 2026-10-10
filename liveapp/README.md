@@ -90,12 +90,28 @@ imports the built `output/site` bundle.
 
 ## Default credentials
 
-| Username | Password | Role |
-|---|---|---|
-| admin | admin@123 | admin (can run "Process data") |
-| viewer1–viewer7 | viewer@123 | viewer (read-only dashboard) |
+There are no built-in credentials. Users are created in one of two ways, and
+both are no-ops once the database already has users:
 
-Change `liveapp/seed_users.json` before exposing it to others.
+- **First admin on a serverless deployment** — set these Vercel environment
+  variables. The admin is created only when the `users` table is empty:
+
+  | Variable | Value |
+  |---|---|
+  | `DGP_BOOTSTRAP_ADMIN_USERNAME` | the admin's username |
+  | `DGP_BOOTSTRAP_ADMIN_PASSWORD` | the admin's password |
+  | `DGP_BOOTSTRAP_ADMIN_DISPLAY_NAME` | optional label shown in the UI |
+
+  Nothing is written to git, and later changing the password variable does not
+  affect a database that already has users. Set a real password here, not a
+  placeholder.
+
+- **On the build machine** — `liveapp/seed_users.json` lists the initial users.
+  It is gitignored because it holds plaintext passwords, so it exists only
+  locally. Edit it before running the first local boot, and keep it out of any
+  backup that leaves the machine.
+
+Change passwords through the database or a fresh seed file; never commit one.
 
 ## Running
 
@@ -106,8 +122,16 @@ python main.py
 # or: uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Open http://localhost:8000. Log in, and if no dataset exists, sign in as
-`admin` → Admin panel → "Process data" to ingest and publish the dashboard.
+Open http://localhost:8000. Log in with an admin account, and if no dataset
+exists, run the ETL once and publish it from the machine holding the files:
+
+```bash
+cd liveapp && python main.py          # terminal 1
+python publish_site.py                # terminal 2, from the project root
+```
+
+`publish_site.py` writes straight into the configured database, so the running
+app picks the new version up without a restart.
 
 ## Daily workflow (the only one you need)
 

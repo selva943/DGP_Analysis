@@ -68,7 +68,25 @@ def _validate_report_date(value: str | None, field: str) -> str | None:
     )
 
 
+def _require_local_processing() -> None:
+    """Refuse up-front when this deployment cannot spawn the ETL runner.
+
+    Checked before any job row is written: once a row exists with status
+    'running' it blocks every later upload with a 409 until it ages out, so a
+    rejected request must never leave one behind.
+    """
+    if not settings.local_processing_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Server-side processing is disabled on this deployment. Run the "
+                "ETL locally and publish with 'python publish_site.py'."
+            ),
+        )
+
+
 def _spawn(job: ProcessJob, db: Session) -> None:
+    """Start the out-of-process ETL runner."""
     try:
         subprocess.Popen(
             [sys.executable, str(RUN_PROCESS), str(job.id)],
@@ -213,6 +231,7 @@ def start_process(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> dict:
+    _require_local_processing()
     _require_idle(db)
 
     plan_date = _validate_report_date(plan_date, "plan_date")
@@ -337,6 +356,7 @@ def admin_status(
     return {
         "has_dataset": version is not None,
         "import_enabled": settings.import_enabled,
+        "local_processing_enabled": settings.local_processing_enabled,
         "active_version": (
             {
                 "id": version.id,

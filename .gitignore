@@ -13,20 +13,20 @@ liveapp/seed_users.json
 # Data files — these belong on the build machine, not in git
 # ~450 MB total. GitHub rejects files over 100 MB and large repos are slow to
 # clone. The database (Supabase) is the source of truth for published data.
+#
+# Folder names are the exact casing on disk: Input/ is capital, output/ and
+# history/ are lower. Linux filesystems are case-sensitive, so this matters.
 # ===========================================================================
 Input/
-History/
-history/archive/
-Output/
-output/site/
-output/site.zip
 updating_files/
+output/
+history/
 *.xlsx
 *.csv
 *.parquet
 
 # Legacy SQLite fallback database (107 MB). Superseded by Supabase.
-liveapp/storage/*.db
+liveapp/storage/
 storage/
 
 # ===========================================================================

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -12,12 +13,23 @@ from fastapi.staticfiles import StaticFiles
 from .config import LIVEAPP_DIR, settings
 from .database import init_db
 from .routers import admin, auth, data
-from .seed import seed_users
+from .seed import bootstrap_admin, seed_users
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Prepare the database before the app starts serving requests."""
+    _warn_if_insecure()
+    init_db()
+    _ensure_first_user()
+    yield
+
 
 app = FastAPI(
     title="DGP Live Dashboard",
     description="Live, database-backed Easy SBF dashboard with role-based access",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS is off unless DGP_CORS_ORIGINS is set. The frontend is served by this
@@ -49,25 +61,37 @@ else:  # pragma: no cover - misconfigured checkout
     print(f"[liveapp] frontend directory missing: {FRONTEND_DIR}")
 
 
-@app.on_event("startup")
-def on_startup() -> None:
-    """Initialize database, ensure tables exist and seed demo users."""
-    _warn_if_insecure()
-    init_db()
+def _ensure_first_user() -> None:
+    """Guarantee the deployment has at least one way to log in.
+
+    The env-configured bootstrap admin wins on an empty database; on the source
+    machine the gitignored seed file adds the rest. Both are no-ops once users
+    exist, and neither can overwrite an existing password.
+    """
     from .database import SessionLocal
 
-    db = SessionLocal()
-    try:
+    def _step(label: str, fn) -> None:
+        db = SessionLocal()
         try:
-            created = seed_users(db)
-            if created:
-                print(f"[liveapp] seeded users: {', '.join(created)}")
-            else:
-                print("[liveapp] users already present; skipping seed")
+            result = fn(db)
+            print(f"[liveapp] {label}: {result}" if result else f"[liveapp] {label}: nothing to do")
         except Exception as exc:
-            print(f"[liveapp] user seeding skipped: {exc}")
-    finally:
-        db.close()
+            # Must never stop startup: the database may legitimately already
+            # hold users, and the console is the only diagnostic available.
+            print(f"[liveapp] {label} skipped: {exc}")
+        finally:
+            db.close()
+
+    def _bootstrap(db):
+        name = bootstrap_admin(db)
+        return f"created admin '{name}'" if name else None
+
+    def _seed(db):
+        created = seed_users(db)
+        return f"seeded {', '.join(created)}" if created else None
+
+    _step("bootstrap admin", _bootstrap)
+    _step("user seed", _seed)
 
 
 def _warn_if_insecure() -> None:

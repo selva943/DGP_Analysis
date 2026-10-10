@@ -1,0 +1,56 @@
+# Files excluded from a Vercel deployment.
+#
+# Deployments made through the GitHub integration only contain committed
+# files, and .gitignore already keeps the large data directories out of the
+# repository. A `vercel` CLI deploy works from the working directory instead,
+# where Input/, history/ and updating_files/ are present and total ~450 MB.
+# Without this file every CLI deploy would upload all of it.
+
+# --- secrets: never upload, never in the bundle ---
+# Patterns without a slash match at any depth, so `.env.*` also covers
+# liveapp/.env - the negation keeps the committed template.
+.env
+.env.*
+liveapp/.env
+liveapp/seed_users.json
+!liveapp/.env.example
+
+# --- source data and ETL outputs: build machine only ---
+Input/
+output/
+history/
+updating_files/
+*.xlsx
+*.xls
+*.csv
+*.parquet
+*.zip
+liveapp/storage/
+
+# --- local Python artefacts ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# --- tooling / docs: not needed at runtime ---
+.git/
+.gitignore
+.venv
+DEPLOYMENT.md
+LIVE_DATABASE_DASHBOARD.md
+PROCESS_SUMMARY.md
+liveapp/README.md
+
+# --- ETL scripts: run on the build machine, never inside the function ---
+Rename.py
+achieved_sbf.py
+find_easy_sbf.py
+find_opening_easy_sbf.py
+monthly_reset.py
+zip_site.py
+publish_site.py
+
+# KEEP: liveapp/** (app + frontend), _dashboard_template.html, api/**, build_dashboard.py

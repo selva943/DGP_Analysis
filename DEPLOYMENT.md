@@ -1,443 +1,228 @@
-# DGP Live Dashboard — Deployment Guide
+# Deployment
 
-Three layers, one repository:
+Two machines are involved, and keeping them straight is the whole trick:
 
-```
-frontend/  +  app/ (FastAPI)  ->  Supabase (PostgreSQL)
-```
-
-The API serves the frontend itself, so in production you deploy **one thing**
-(the FastAPI app) and point it at a Supabase project.
-
----
-
-## 1. What you need
-
-| Item | Notes |
-|---|---|
-| Python 3.10+ | 3.14 works |
-| Supabase project | You already have one |
-| The DGP project folder | `Input/`, `updating_files/`, `History/`, `Output/`, `_dashboard_template.html` |
-| A machine that stays on | The ETL + dashboard import run there |
-| HTTPS in front of the app | See §5 — do not skip on a public network |
-
-The `History/` folder is the real source of truth (hundreds of MB). The app
-only needs `History/` + `_dashboard_template.html` to import bundles; it needs
-the full folder tree to run the ETL scripts.
-
----
-
-## 2. First-time setup
-
-```powershell
-cd G:\profile\Desktop\DGP_analysis\liveapp
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-Create `liveapp\.env` (copy `.env.example`):
-
-```
-DGP_DATABASE_URL=postgresql://postgres.<PROJECT_REF>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:5432/postgres
-DGP_JWT_SECRET=<64+ random chars>
-DGP_TOKEN_TTL_MINUTES=720
-DGP_ETL_STEP_TIMEOUT=3600
-DGP_SKIP_SOURCE_SCRIPTS=0
-DGP_EXCLUDED_VISIT_MONTHS=2026-08
-DGP_EXCLUDED_VISIT_DATES=2026-10-15
-DGP_CORS_ORIGINS=
-```
-
-Generate a secret:
-
-```powershell
-python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-Notes:
-- Use the **Session pooler** (port `5432`). The transaction pooler (`6543`)
-  recycles connections mid-import and can kill a long bundle decrypt.
-- URL-encode the password (`@` -> `%40`).
-- `DGP_CORS_ORIGINS` stays **blank**. The frontend is served by this same app,
-  so it is same-origin and needs no CORS. Never set `*`.
-
-First launch creates every table in Supabase and seeds the 11 users
-automatically. Nothing to import.
-
----
-
-## 3. Running it
-
-### Development
-
-```powershell
-cd G:\profile\Desktop\DGP_analysis\liveapp
-python main.py                     # reload on, port 8000
-python main.py --port 8080
-python main.py --no-reload         # faster
-```
-
-### Production (single process)
-
-```powershell
-python main.py --no-reload --host 127.0.0.1 --port 8000
-```
-
-Bind to `127.0.0.1` and let a reverse proxy terminate TLS — do not expose
-uvicorn directly to the internet.
-
-### Production (multiple workers)
-
-The bundle import is CPU/IO heavy and holds a DB connection. Multiple workers
-are fine because imports are short; avoid them if you also run the ETL from the
-web UI.
-
-```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4
-```
-
-### Windows: run as a service (auto-start)
-
-Use [NSSM](https://nssm.cc):
-
-```powershell
-nssm install DGPApp "C:\path\to\.venv\Scripts\python.exe" `
-  "G:\profile\Desktop\DGP_analysis\liveapp\main.py --no-reload --host 127.0.0.1 --port 8000"
-nssm set DGPApp AppDirectory "G:\profile\Desktop\DGP_analysis\liveapp"
-nssm set DGPApp Start SERVICE_AUTO_START
-nssm start DGPApp
-```
-
-Or use **Task Scheduler** -> "Run whether user is logged on or not" ->
-trigger "At startup".
-
-### Linux: systemd
-
-`/etc/systemd/system/dgp.service`:
-
-```ini
-[Unit]
-Description=DGP Live Dashboard
-After=network-online.target
-
-[Service]
-Type=simple
-User=dgp
-WorkingDirectory=/opt/dgp_analysis/liveapp
-Environment="PATH=/opt/dgp_analysis/liveapp/.venv/bin"
-ExecStart=/opt/dgp_analysis/liveapp/.venv/bin/uvicorn app.main:app \
-          --host 127.0.0.1 --port 8000 --workers 4
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now dgp
-sudo journalctl -u dgp -f
-```
-
----
-
-## 4. Firewall (LAN access)
-
-```powershell
-New-NetFirewallRule -DisplayName "DGP Dashboard" -Direction Inbound `
-  -LocalPort 8000 -Protocol TCP -Action Allow -Profile Private
-```
-
-Users then open `http://<server-ip>:8000`.
-
-Use a **Private** profile only. Do not open this on Public networks.
-
----
-
-## 5. HTTPS (required before this leaves your LAN)
-
-The login token is stored in `localStorage` and sent as `Authorization: Bearer`.
-Over plain HTTP it crosses the network in clear text — anyone on the same WiFi
-can read it and log in as any user. Put a reverse proxy in front:
-
-### nginx
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name dgp.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/dgp.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/dgp.example.com/privkey.pem;
-
-    client_max_body_size 2048M;   # bundle zips are large
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 600s;  # bundle import can take a while
-    }
-}
-
-server {
-    listen 80;
-    server_name dgp.example.com;
-    return 301 https://$host$request_uri;
-}
-```
-
-`X-Forwarded-For` matters: the Viewer Activity log records the client IP from
-it, so without this every row shows the proxy's address.
-
-Get a certificate:
-
-```bash
-sudo certbot --nginx -d dgp.example.com
-```
-
-### IIS (Windows)
-
-Install URL Rewrite + ARR, set up an HTTPS binding and a reverse proxy to
-`127.0.0.1:8000`. Set the site binding to require SSL, and set
-`client_max_body_size` equivalent to at least 2 GB in `web.config`
-(`<requestFiltering><requestLimits maxAllowed="2147483648" />`).
-
----
-
-## 6. Daily operation
-
-```
-build_dashboard.py  ->  Output/site/
-zip_site.py         ->  Output/site.zip
-Admin -> Import zip (or "Import from server folder")
-```
-
-Viewers just log in. Tracking starts from the first dashboard load.
-
-If you also want the app to run the ETL itself, press **Run ETL scripts** in the
-admin drawer. That spawns `Rename.py`, `find_easy_sbf.py`, `achieved_sbf.py`
-and `find_opening_easy_sbf.py` against the folders beside `liveapp/`.
-
----
-
-## 7. Security checklist
-
-- [ ] `DGP_JWT_SECRET` replaced with a 48+ char random value
-- [ ] Supabase password **rotated** if it was ever pasted into chat, email or a doc
-- [ ] HTTPS terminated in front of the app
-- [ ] uvicorn bound to `127.0.0.1`, not `0.0.0.0`
-- [ ] `DGP_CORS_ORIGINS` left blank
-- [ ] Firewall rule limited to the Private profile
-- [ ] `liveapp/.env` not committed (`.gitignore` covers it)
-- [ ] `liveapp/seed_users.json` not committed — it holds the shared plaintext password
-- [ ] The shared employee password rotated to per-person credentials
-- [ ] Supabase RLS reviewed if any table is ever exposed to the `anon` key
-- [ ] `Output/site/` never published to a public static host — it is now
-      **unencrypted** JSON (`build_dashboard.py` no longer derives a password)
-
-### About the shared password
-
-All 11 employees currently share one password, so the Viewer Activity log proves
-*a* session happened but not reliably *who* did it. Per-person passwords make
-the log a real audit trail. That is a change in `seed_users.json` (which stays
-local and git-ignored) plus a reset of the existing rows.
-
----
-
-## 8. Backups
-
-The database is the only thing that matters. Everything else is reproducible
-from `History/`.
-
-Supabase: **Dashboard -> Backups** (free tier keeps ~7 days) or
-`pg_dump`:
-
-```bash
-pg_dump "$DATABASE_URL" --format=custom --file dgp_$(date +%F).dump
-```
-
-```powershell
-pg_dump $env:DGP_DATABASE_URL --format=custom --file dgp_2026-10-10.dump
-```
-
-`History/` and `Output/` are not backed up by the app — copy them yourself if
-rebuilds matter.
-
-At a monthly publishing cadence the dataset tables settle around 12 x ~61k
-customer rows a year, which is comfortable on the free tier. If you ever switch
-to daily imports, prune old versions:
-
-```sql
-DELETE FROM dashboard_customer WHERE version_id NOT IN
-  (SELECT id FROM dataset_version WHERE is_active);
-DELETE FROM dashboard_core WHERE version_id NOT IN
-  (SELECT id FROM dataset_version WHERE is_active);
-DELETE FROM dataset_version WHERE is_active IS FALSE;
-```
-
-Viewers only ever read the active version, so this is safe.
-
----
-
-## 9. GitHub + Vercel (cloud deployment)
-
-### How the split works
-
-```
-Build machine (Windows)                    Vercel                     Supabase
-------------------------------------------  ------------------------   ----------
-build_dashboard.py
-publish_site.py  ----------------------------------> (nothing)  ---->  dataset tables
-                                          api/index.py  ----reads---->  read API
-browser -------------------------------------->  frontend + API
-```
-
-Vercel serves the **read path** only:
-
-| Endpoint | Measured | Vercel limit |
+| Where | What runs | What it needs |
 |---|---|---|
-| `GET /api/core` | ~2.1 s | 60 s |
-| `GET /api/dse/{dse}/customers` | ~1.1 s | 60 s |
-| `POST /api/login` | <1 s | 60 s |
-| `POST /api/activity/open` | <0.8 s | 60 s |
-| `POST /api/admin/import-site` | **47.5 s** | **disabled** |
+| **Build machine** (your laptop) | `Rename.py` → `find_easy_sbf.py` → `achieved_sbf.py` → `find_opening_easy_sbf.py` → `build_dashboard.py` → `publish_site.py` | The data files (`Input/`, `history/`, `updating_files/`) and pandas |
+| **Vercel** | `api/index.py` → `liveapp/app` (FastAPI) | A PostgreSQL connection string and nothing else |
 
-The import writes tens of thousands of rows to Postgres, which does not fit in
-a 60 s function. Publishing therefore happens on the build machine with
-`publish_site.py`, which does exactly what the Admin upload button does.
-
-### 1. Push to GitHub
-
-```powershell
-cd G:\profile\Desktop\DGP_analysis
-git add -A
-git status                    # confirm no .env, seed_users.json or data files
-git commit -m "DGP live dashboard: Supabase backend, bundle publish, activity monitor"
-git branch -M main
-git remote add origin https://github.com/<you>/<repo>.git
-git push -u origin main
-```
-
-`.gitignore` already excludes `.env`, `seed_users.json`, the 107 MB SQLite file
-and every data folder (~450 MB). What gets committed is ~43 files / ~430 KB,
-including `_dashboard_template.html`, which the app serves.
-
-Use a **private** repository.
-
-### 2. Create the Vercel project
-
-1. [vercel.com/new](https://vercel.com/new) -> import the GitHub repo
-2. Framework preset: **Other**
-3. Build command: leave empty
-4. Output directory: `api`
-
-`vercel.json` already sets the output directory, the rewrite rule, a 60 s
-function limit and `includeFiles` for `_dashboard_template.html`.
-
-Vercel installs `requirements.txt` by default. Use the lean set instead
-(Project -> Settings -> Build & Development, or omit that step):
-
-```
-requirements-vercel.txt
-```
-
-That drops `pandas`/`pyarrow`, which only the ETL and the importer need, and
-keeps the function small enough to deploy and quick to cold-start.
-
-### 3. Environment variables
-
-Project -> Settings -> Environment Variables. Add to **both** Production and
-Preview:
-
-| Name | Value |
-|---|---|
-| `DGP_DATABASE_URL` | the Supabase **Session pooler** URL (port 5432) |
-| `DGP_JWT_SECRET` | a **new** strong secret for production |
-| `DGP_TOKEN_TTL_MINUTES` | `720` |
-| `DGP_IMPORT_ENABLED` | `0` |
-| `DGP_CORS_ORIGINS` | leave empty (same-origin) |
-| `DGP_EXCLUDED_VISIT_MONTHS` | `2026-08` |
-| `DGP_EXCLUDED_VISIT_DATES` | `2026-10-15` |
-
-Then **Redeploy**. The tables already exist in Supabase and the users are
-already seeded, so there is nothing else to initialise.
-
-With `DGP_IMPORT_ENABLED=0` the Admin drawer shows:
-
-```
-Browser import is disabled on this deployment.
-python publish_site.py
-```
-
-instead of the upload form.
-
-### 4. Publishing each month
-
-On the build machine:
-
-```powershell
-cd G:\profile\Desktop\DGP_analysis
-python build_dashboard.py
-python publish_site.py
-```
-
-That is the entire routine. Viewers on the Vercel URL get the new version on
-their next page load — no redeploy, because the data lives in Supabase.
-
-### 5. Verify the deployment
-
-```powershell
-curl.exe -s -o NUL -w "%{http_code}" https://<your-domain>/api/login   # 405 = route alive
-```
-
-If `/` returns a JSON 404, `outputDirectory` is wrong. If the dashboard reports
-"template not found", `includeFiles` did not pick up `_dashboard_template.html`.
-
-### Limits worth knowing
-
-- **Hobby: 100 s/day of function time, 1 GB RAM, cold starts.** Read paths are a
-  few hundred milliseconds each, so 11 daily users is comfortable.
-- **Supabase connections.** Each warm function instance holds one. The free tier
-  allows ~15 concurrent — fine here.
-- **Data never travels through Vercel**, so republishing costs 0 s of function
-  time and does not count against the daily budget.
-- The ETL scripts cannot run on Vercel at all (GBs of local files). Use
-  `publish_site.py`, or **Run ETL scripts** on the build machine.
+Data never travels through Vercel. `publish_site.py` writes straight to
+Supabase from the build machine; the deployed function only ever *reads*.
+That is why the function bundle is small and why no data files are committed.
 
 ---
 
-## 10. Troubleshooting
+## 1. One-time setup
 
-| Symptom | Cause / fix |
-|---|---|
-| `500` on login after an `.env` edit | The app read the old config. Restart the process. |
-| `409 "A processing job is already running"` | A crashed job left a row. It auto-fails after `DGP_ETL_STEP_TIMEOUT`; restart to clear it immediately. |
-| `400 Could not decrypt this legacy encrypted bundle` | Old v2 bundle. Rebuild with the current `build_dashboard.py` (no longer encrypts). |
-| `409 No dataset has been published yet` | Admin -> Import zip. |
-| Dashboard blank, `progress bar spins forever` | Check the message under the bar; usually `/api/core` 401 (token expired -> log out and in). |
-| Bundle upload fails immediately | Check the reverse proxy body-size limit. |
-| `viewer_activity` empty | Table is created on startup. Confirm the app restarted after the upgrade. |
-| Activity shows the proxy IP | Add `proxy_set_header X-Forwarded-For` (nginx). |
+### Supabase
+
+1. Create the project, then **Project settings → Database → Connection string**.
+2. Use the **Session pooler** (port `5432`). ETL jobs hold a connection open for
+   a long time and the transaction pooler (6543) will drop them.
+3. URL-encode the password if it contains `@ : / ? #`.
+
+The app creates its own tables on first start (`Base.metadata.create_all`), so
+there is no migration step. Deploy once before the first publish and the schema
+will be in place.
+
+### Vercel
+
+1. **Add New → Project**, then import `selva943/DGP_Analysis`.
+2. Leave every build setting alone. This repo has no framework preset to guess
+   at: `vercel.json` already points at `api/index.py`, and the root
+   `requirements.txt` is the dependency list Vercel installs.
+3. **Deploy.**
+
+### Environment variables
+
+Vercel is configured entirely through environment variables — there is no
+`.env` file on the server, because `.env` is gitignored and never deployed.
+
+Project → Settings → Environment Variables. Set these for **Production** (and
+**Preview** too, if you want previews to work).
+
+| Variable | Required | Value |
+|---|---|---|
+| `DGP_DATABASE_URL` | **yes** | `postgresql://postgres.<ref>:<password>@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres` |
+| `DGP_JWT_SECRET` | **yes** | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `DGP_IMPORT_ENABLED` | recommended | `0` — see below |
+| `DGP_LOCAL_PROCESSING_ENABLED` | recommended | `0` — see below |
+| `DGP_BOOTSTRAP_ADMIN_USERNAME` | first deploy | your admin username |
+| `DGP_BOOTSTRAP_ADMIN_PASSWORD` | first deploy | a real password |
+| `DGP_BOOTSTRAP_ADMIN_DISPLAY_NAME` | optional | label shown in the UI |
+| `DGP_CORS_ORIGINS` | no | leave blank; the frontend is same-origin |
+| `DGP_TOKEN_TTL_MINUTES` | no | `720` (12 h) default |
+
+After adding any variable, redeploy — Vercel only applies env changes to new
+deployments.
+
+#### Why `DGP_IMPORT_ENABLED=0`
+
+Importing a bundle writes tens of thousands of rows and takes ~45 s or more.
+The function timeout is 60 s, so the request would be killed partway through and
+leave the database inconsistent. With it off the admin panel explains the
+alternative instead of failing.
+
+#### Why `DGP_LOCAL_PROCESSING_ENABLED=0`
+
+"Run ETL scripts" spawns a Python subprocess from the project root. Vercel has
+no writable checkout and no interpreter that outlives the request, so the call
+could only ever 500. With it off the button is replaced by the
+`publish_site.py` instructions.
+
+Both flags default to `1`, so a local machine behaves exactly as before.
+
+### The first login
+
+`liveapp/seed_users.json` is gitignored — it holds plaintext passwords and has
+no business in git. So the serverless deployment starts with no users at all.
+
+On the **first** start, `seed.bootstrap_admin()` creates a single admin from
+`DGP_BOOTSTRAP_ADMIN_USERNAME` / `DGP_BOOTSTRAP_ADMIN_PASSWORD`, and **only if
+the `users` table is completely empty**. From then on it is a no-op, so:
+
+- rotating the password variable later does not change any existing login;
+- the app can never resurrect a deleted account;
+- the password only ever exists in Vercel's environment settings.
+
+Sign in, and you are admin. Add viewers through the `users` table.
+
+> If you previously deployed this project, check whether an old admin row is
+> already there. If so the bootstrap will correctly skip, and the password you
+> set in Vercel will not apply — reset that row's `password_hash` or delete the
+> user to re-bootstrap.
 
 ---
 
-## 11. Rollback
+## 2. Publishing new data
 
-```powershell
-# stop
-nssm stop DGPApp          # or: sudo systemctl stop dgp
+Run on the build machine, with `liveapp/.env` pointing at the **same**
+Supabase project. There is no `.env` on Vercel to copy, so keep this one local
+and out of any shared backup.
 
-# previous code
-cd G:\profile\Desktop\DGP_analysis
-git checkout <previous-tag>    # if you use git
+```bash
+# 1. Put the new reports in Input/ and updating_files/
+python Rename.py                 # normalise filenames
 
-# restart
-python liveapp\main.py --no-reload
+# 2. The three analyses
+python find_easy_sbf.py          # Easy_SBF_Gap_<date>.xlsx  -> output/ + history/
+python achieved_sbf.py           # Achieved_SBF_<stamp>.xlsx -> output/ + history/
+python find_opening_easy_sbf.py  # Opening_Easy_SBF_<month>.xlsx
+
+# 3. Build the bundle from history/
+python build_dashboard.py        # -> output/site/
+python zip_site.py               # -> output/site.zip   (only needed for manual import)
+
+# 4. Publish to the database
+python publish_site.py           # writes a new active dataset version
 ```
 
-`init_db()` only creates tables; it never drops or alters them, so rolling the
-code back cannot damage data.
+Step 4 is what makes the change visible on Vercel. The deployment never needs
+restarting — it reads the active version on each request.
+
+To roll back, re-run `publish_site.py` against an older `output/site/`. Every
+publish is a new row in `dataset_version`, so nothing is overwritten.
+
+### Month rollover
+
+```bash
+python monthly_reset.py              # dry run, prints what it would move
+python monthly_reset.py --apply      # archive stale months into history/archive/<YYYY>/<MM>/
+```
+
+It is a dry run by default on purpose — check the plan before applying.
+
+---
+
+## 3. What is in the deployed bundle
+
+`vercel.json` builds one function and rewrites every path to it:
+
+```json
+"functions": { "api/index.py": { "maxDuration": 60, "memory": 1024, "includeFiles": "**/*" } },
+"rewrites":  [{ "source": "/(.*)", "destination": "/api/index.py" }]
+```
+
+`includeFiles: "**/*"` forces the whole uploaded tree into the function,
+because the app lives in `liveapp/` and is reached through a runtime
+`sys.path` entry that Vercel's import tracer cannot follow on its own.
+`api/index.py` re-exports it explicitly to make the dependency visible.
+`includeFiles` takes a single glob string, not an array.
+
+`maxDuration` is 60 s, which is the Hobby ceiling. On Pro it can be raised.
+`memory` only applies if Fluid compute is off — see Troubleshooting.
+
+`.vercelignore` decides what gets uploaded in the first place. It excludes the
+~450 MB of data directories, the ETL scripts, the docs, and anything secret.
+This matters most for `vercel --prod` from a terminal, which deploys the
+working directory rather than the committed files; a Git-connected deploy only
+ever sees what is in the repository anyway.
+
+**Keep in the bundle** (do not add these to `.vercelignore`):
+
+| Path | Why |
+|---|---|
+| `liveapp/**` | the whole application and its frontend |
+| `_dashboard_template.html` | the dashboard UI; `main.py` serves it at `/_dashboard_template.html` |
+| `api/**` | the function entrypoint |
+
+The root `requirements.txt` is the lean serverless set — no pandas, no
+pyarrow. `pandas` is only reachable through `process_runner → builder`, which
+is the ETL path that `DGP_LOCAL_PROCESSING_ENABLED=0` disables. The full set,
+including pandas, lives in `liveapp/requirements.txt` for local use.
+
+---
+
+## 4. Troubleshooting
+
+**`ModuleNotFoundError: No module named 'app'`** — `api/index.py` adds
+`liveapp/` and the repo root to `sys.path` before importing. If you renamed
+either folder, that list is the first thing to fix.
+
+**Everything 500s immediately** — usually a missing or wrong `DGP_DATABASE_URL`.
+Without it the app falls back to SQLite, which needs a writable directory;
+serverless has none, so it raises a startup error saying exactly that. Check
+the function logs.
+
+**No one can log in** — the `users` table is empty. Confirm
+`DGP_BOOTSTRAP_ADMIN_USERNAME` / `_PASSWORD` are set for the environment you
+deployed to, then redeploy. If users already exist the bootstrap is skipped by
+design.
+
+**Blank page, login works** — `_dashboard_template.html` did not make it into
+the bundle. Confirm it is not in `.vercelignore`.
+
+**Admin panel shows "disabled" hints** — that is `DGP_IMPORT_ENABLED=0` and
+`DGP_LOCAL_PROCESSING_ENABLED=0` working as intended on serverless. Publish
+with `publish_site.py`.
+
+**Cold start is slow** — every start runs `create_all` against the pooler.
+New Vercel projects default to `iad1` (Washington, D.C.) while this Supabase
+pooler is in Tokyo, so pin the function to the region next to the database:
+
+```json
+"functions": { "api/index.py": { "regions": ["nrt1"] } }
+```
+
+`nrt1` is Tokyo and matches an `ap-northeast-1` pooler. Use whichever region
+matches your own connection string. The same value can be set under
+Project → Settings → Functions → Function Regions instead of editing the file.
+Hobby plans allow a single region, so this is safe on any plan.
+
+**"memory" in `vercel.json` has no effect** — with Fluid compute enabled (the
+default for new projects), memory cannot be set in `vercel.json`. Set it in
+Project → Settings → Functions instead. `maxDuration` still works.
+
+---
+
+## 5. Secret hygiene
+
+- `liveapp/.env` and `liveapp/seed_users.json` are gitignored. Both hold
+  plaintext credentials. If either has been pasted into a chat, an email or a
+  shared document, rotate it: a new database password in Supabase, and a new
+  `DGP_JWT_SECRET` in Vercel (which invalidates every issued token).
+- `DGP_JWT_SECRET` must be at least 32 characters. The app logs a loud warning
+  at startup if it is left at the default.
+- Never commit `.env`. `.gitignore` and `.vercelignore` both exclude it; the
+  committed `liveapp/.env.example` is a template with empty values.

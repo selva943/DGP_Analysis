@@ -33,6 +33,9 @@ const importDiskBtn = document.getElementById('importDiskBtn');
 const uploadMsg = document.getElementById('uploadMsg');
 const clearUploadMsg = document.getElementById('clearUploadMsg');
 
+const processBtn = document.getElementById('processBtn');
+const processHint = document.getElementById('processHint');
+
 function setError(msg) {
   loginErr.textContent = msg || '';
 }
@@ -183,6 +186,14 @@ function applyImportMode(enabled) {
   if (!form || !hint) return;
   form.classList.toggle('hidden', !enabled);
   hint.classList.toggle('hidden', enabled);
+}
+
+// Same idea for the ETL button: hide it where the server cannot spawn the
+// scripts and explain publish_site.py instead.
+function applyProcessingMode(enabled) {
+  if (!processBtn || !processHint) return;
+  processBtn.classList.toggle('hidden', !enabled);
+  processHint.classList.toggle('hidden', enabled);
 }
 
 // Import a zip of output/site.
@@ -652,6 +663,7 @@ async function refreshAdmin() {
     statusRunningJob.textContent = status.processing ? 'Job #' + status.running_job_id : '-';
     statusUserCount.textContent = status.user_count;
     applyImportMode(status.import_enabled !== false);
+    applyProcessingMode(status.local_processing_enabled !== false);
     refreshJobsList();
     if (status.processing && !pollTimer) {
       startPolling(status.running_job_id);
