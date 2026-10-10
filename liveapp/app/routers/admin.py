@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import secrets
 import subprocess
 import sys
 
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 from ..config import LIVEAPP_DIR, settings
 from ..database import get_db
 from ..deps import require_admin
-from ..models import ProcessJob, User
+from ..models import ProcessJob, UploadSession, User
 from ..services import activity, site_bundle, store
 
 
@@ -138,6 +139,213 @@ def _require_idle(db: Session) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Chunked bundle upload
+#
+# A serverless request body is capped at 4.5 MB and output/site.zip is already
+# ~4.1 MB, so a single POST has almost no headroom. The browser slices the zip
+# into CHUNK_BYTES pieces and posts each one; the parts are staged in the
+# database because a serverless instance cannot be relied on to stay alive
+# between requests.
+# ---------------------------------------------------------------------------
+
+CHUNK_BYTES = 3 * 1024 * 1024  # comfortably under the 4.5 MB body cap
+_MAX_CHUNK_BYTES = 4 * 1024 * 1024
+_UPLOAD_TTL_HOURS = 24
+
+
+@router.post("/import-site/chunked/init")
+def chunked_init(
+    filename: str = Form("site.zip"),
+    total_chunks: int = Form(0),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> dict:
+    """Open a chunked upload session and report how to slice the file."""
+    _require_idle(db)
+    if total_chunks < 1 or total_chunks > 512:
+        raise HTTPException(
+            status_code=400,
+            detail=f"total_chunks must be 1-512, got {total_chunks}.",
+        )
+    upload_id = secrets.token_hex(16)
+    db.add(
+        UploadSession(
+            upload_id=upload_id,
+            chunk_index=-1,
+            data=b"",
+            filename=filename[:255],
+            total_chunks=total_chunks,
+            created_by=admin.username,
+        )
+    )
+    db.commit()
+    return {
+        "upload_id": upload_id,
+        "chunk_bytes": CHUNK_BYTES,
+        "total_chunks": total_chunks,
+    }
+
+
+@router.post("/import-site/chunked/part")
+async def chunked_part(
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    chunk: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> dict:
+    """Store one slice. Safe to retry: an existing index is overwritten."""
+    session = _upload_session(db, upload_id)
+    raw = await chunk.read()
+    if len(raw) > _MAX_CHUNK_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"chunk is {len(raw):,} bytes; the limit is {_MAX_CHUNK_BYTES:,}.",
+        )
+    if not (0 <= chunk_index < max(session.total_chunks, 1)):
+        raise HTTPException(
+            status_code=400,
+            detail=f"chunk_index {chunk_index} is outside this session.",
+        )
+
+    existing = (
+        db.query(UploadSession)
+        .filter(
+            UploadSession.upload_id == upload_id,
+            UploadSession.chunk_index == chunk_index,
+        )
+        .first()
+    )
+    if existing is not None:
+        existing.data = raw
+    else:
+        db.add(
+            UploadSession(
+                upload_id=upload_id,
+                chunk_index=chunk_index,
+                data=raw,
+                filename=session.filename,
+                total_chunks=session.total_chunks,
+                created_by=admin.username,
+            )
+        )
+    db.commit()
+    return {"received": chunk_index, "bytes": len(raw)}
+
+
+def _upload_session(db: Session, upload_id: str) -> UploadSession:
+    session = (
+        db.query(UploadSession)
+        .filter(UploadSession.upload_id == upload_id, UploadSession.chunk_index == -1)
+        .first()
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown upload_id.")
+    return session
+
+
+def _assemble(db: Session, upload_id: str) -> bytes:
+    """Join the stored slices in order, or explain what is still missing."""
+    session = _upload_session(db, upload_id)
+    parts = (
+        db.query(UploadSession)
+        .filter(
+            UploadSession.upload_id == upload_id,
+            UploadSession.chunk_index >= 0,
+        )
+        .order_by(UploadSession.chunk_index)
+        .all()
+    )
+    received = {p.chunk_index for p in parts}
+    expected = set(range(session.total_chunks))
+    missing = sorted(expected - received)
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Upload incomplete: missing chunk(s) {missing[:20]}.",
+        )
+    return b"".join(bytes(p.data) for p in parts)
+
+
+def _drop_upload(db: Session, upload_id: str) -> None:
+    db.query(UploadSession).filter(UploadSession.upload_id == upload_id).delete()
+    db.commit()
+
+
+def _publish(db: Session, admin: User, archive: bytes, log: "_LogBuffer") -> dict:
+    """Run the shared import + publish path for a bundle held in memory."""
+    version_id = None
+    job = ProcessJob(
+        status="running",
+        triggered_by=admin.username,
+        report_type="site-import",
+        log="",
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    try:
+        log(f"Import started at {dt.datetime.now():%d-%m-%Y %H:%M:%S}")
+        log(f"Archive: {len(archive):,} bytes")
+        payload = site_bundle.import_from_zip(archive, log)
+        version_id = store.save_payload(db, payload, created_by=admin.username)
+        job.version_id = version_id
+        job.status = "success"
+        job.finished_at = dt.datetime.utcnow()
+        job.log = log.text()
+        db.commit()
+    except site_bundle.SiteBundleError as exc:
+        job.status = "failed"
+        job.error = str(exc)
+        job.finished_at = dt.datetime.utcnow()
+        job.log = log.text()
+        db.commit()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        job.status = "failed"
+        job.error = str(exc)
+        job.finished_at = dt.datetime.utcnow()
+        job.log = log.text()
+        db.commit()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    meta = payload.get("meta", {})
+    return {
+        "version_id": version_id,
+        "job_id": job.id,
+        "status": "success",
+        "n_dse": meta.get("n_dse"),
+        "n_customers": meta.get("n_customers"),
+        "plan_dates": (payload.get("dates") or {}).get("plan"),
+    }
+
+
+@router.post("/import-site/chunked/commit")
+def chunked_commit(
+    upload_id: str = Form(...),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> dict:
+    """Assemble the uploaded slices and publish them as the active dataset."""
+    if not settings.import_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Browser import is disabled on this deployment. Run "
+                "'python publish_site.py' on the machine that holds output/site."
+            ),
+        )
+    _require_idle(db)
+    try:
+        archive = _assemble(db, upload_id)
+        result = _publish(db, admin, archive, _LogBuffer())
+    finally:
+        _drop_upload(db, upload_id)
+    return result
+
+
 @router.post("/import-site")
 async def import_site(
     file: UploadFile | None = File(None),
@@ -147,11 +355,9 @@ async def import_site(
 ) -> dict:
     """Load a built dashboard bundle (output/site) into the database.
 
-    Upload a zip of output/site, or pass from_disk=true to read the folder that
-    the ETL scripts write to on this server. The bundle is decrypted and stored
-    as the active dataset version, which is what viewers read.
-
-    This never runs the ETL scripts and never touches Input/.
+    Single-request form. Kept for local use and for bundles that fit under the
+    platform's request-body cap; anything larger must use the chunked endpoints,
+    which is what the admin panel does.
     """
     _require_idle(db)
 
@@ -170,58 +376,42 @@ async def import_site(
             detail="Attach a zip of output/site, or send from_disk=true.",
         )
 
-    log = _LogBuffer()
+    if from_disk:
+        site_dir = site_bundle.default_site_dir()
+        archive = None
+        log = _LogBuffer()
+        log(f"Reading bundle from {site_dir}")
+        payload = site_bundle.import_from_disk(site_dir, log)
+        job = _record_import(db, admin, log, payload)
+        meta = payload.get("meta", {})
+        return {
+            "version_id": job.version_id,
+            "job_id": job.id,
+            "status": "success",
+            "n_dse": meta.get("n_dse"),
+            "n_customers": meta.get("n_customers"),
+            "plan_dates": (payload.get("dates") or {}).get("plan"),
+        }
+
+    raw = await file.read()
+    return _publish(db, admin, raw, _LogBuffer())
+
+
+def _record_import(db: Session, admin: User, log: "_LogBuffer", payload: dict) -> ProcessJob:
+    """Persist a dataset built straight from disk (no archive in memory)."""
+    version_id = store.save_payload(db, payload, created_by=admin.username)
     job = ProcessJob(
-        status="running",
+        status="success",
         triggered_by=admin.username,
         report_type="site-import",
-        log="",
+        version_id=version_id,
+        finished_at=dt.datetime.utcnow(),
+        log=log.text(),
     )
     db.add(job)
     db.commit()
     db.refresh(job)
-
-    try:
-        log(f"Import started at {dt.datetime.now():%d-%m-%Y %H:%M:%S}")
-        if from_disk:
-            site_dir = site_bundle.default_site_dir()
-            log(f"Reading bundle from {site_dir}")
-            payload = site_bundle.import_from_disk(site_dir, log)
-        else:
-            raw = await file.read()
-            log(f"Uploaded archive: {len(raw):,} bytes")
-            payload = site_bundle.import_from_zip(raw, log)
-
-        version_id = store.save_payload(db, payload, created_by=admin.username)
-        job.version_id = version_id
-        job.status = "success"
-        job.finished_at = dt.datetime.utcnow()
-        job.log = log.text()
-        db.commit()
-    except site_bundle.SiteBundleError as exc:
-        job.status = "failed"
-        job.error = str(exc)
-        job.finished_at = dt.datetime.utcnow()
-        job.log = log.text()
-        db.commit()
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:  # pragma: no cover - surfaced via job status
-        job.status = "failed"
-        job.error = str(exc)
-        job.finished_at = dt.datetime.utcnow()
-        job.log = log.text()
-        db.commit()
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    meta = payload.get("meta", {})
-    return {
-        "version_id": version_id,
-        "job_id": job.id,
-        "status": "success",
-        "n_dse": meta.get("n_dse"),
-        "n_customers": meta.get("n_customers"),
-        "plan_dates": (payload.get("dates") or {}).get("plan"),
-    }
+    return job
 
 
 @router.post("/process")

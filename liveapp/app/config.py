@@ -13,6 +13,47 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 LIVEAPP_DIR = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = LIVEAPP_DIR.parent
 
+# PostgreSQL schemes that carry an explicit "+driver" already. Left untouched.
+_EXPLICIT_PG = ("postgresql+psycopg://", "postgresql+psycopg2://", "postgresql+pg8000://")
+
+
+def pin_postgres_driver(url: str) -> str:
+    """Give a bare ``postgresql://`` URL an explicit driver.
+
+    SQLAlchemy 2.1.0 (released 2026-09-24) changed the default DBAPI for
+    ``postgresql://`` from psycopg2 to psycopg (v3). That is a silent,
+    runtime-only change: the same requirements.txt produced a working function
+    on one day and
+
+        ModuleNotFoundError: No module named 'psycopg'
+
+    on the next, purely because the resolved version differed between the
+    development machine and the deployment.
+
+    Rewriting the scheme here means the installed package decides, not
+    SQLAlchemy's version. Whatever is importable wins, so this works on any
+    SQLAlchemy 2.0 or 2.1 and cannot break again on the next minor release.
+    """
+    if url.startswith(_EXPLICIT_PG):
+        return url
+    if not url.startswith(("postgresql://", "postgres://")):
+        return url
+
+    try:
+        import psycopg  # noqa: F401
+
+        scheme = "postgresql+psycopg://"
+    except ImportError:
+        try:
+            import psycopg2  # noqa: F401
+
+            scheme = "postgresql+psycopg2://"
+        except ImportError:
+            # Neither driver present. Leave the URL alone so SQLAlchemy's own
+            # error surfaces, naming the driver it actually looked for.
+            return url
+    return scheme + url.split("://", 1)[1]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -103,7 +144,7 @@ class Settings(BaseSettings):
     @property
     def resolved_database_url(self) -> str:
         if self.database_url:
-            return self.database_url
+            return pin_postgres_driver(self.database_url)
         # SQLite fallback for local use. Serverless platforms mount the bundle
         # read-only, so the directory cannot be created there - that is a
         # configuration error (DGP_DATABASE_URL missing), not a crash to

@@ -1,31 +1,36 @@
 # Files excluded from a Vercel deployment.
 #
-# Deployments made through the GitHub integration only contain committed
-# files, and .gitignore already keeps the large data directories out of the
-# repository. A `vercel` CLI deploy works from the working directory instead,
-# where Input/, history/ and updating_files/ are present and total ~450 MB.
-# Without this file every CLI deploy would upload all of it.
+# The GitHub integration only ever sees committed files, and .gitignore already
+# keeps the large data directories out of the repository. This matters most for
+# `vercel --prod` from a terminal, which deploys the working directory instead:
+# without this file every CLI deploy would upload ~450 MB of Input/, history/
+# and updating_files/.
+#
+# IMPORTANT: this only decides what gets *uploaded*. Vercel's Python builder
+# then globs the entire uploaded tree into the function (it does not tree-shake
+# and it ignores `includeFiles` completely), so do not rely on this to keep a
+# file out of the function bundle - only out of the upload.
 
-# --- secrets: never upload, never in the bundle ---
+# --- secrets ---
 # Patterns without a slash match at any depth, so `.env.*` also covers
-# liveapp/.env - the negation keeps the committed template.
+# liveapp/.env. The negation keeps the committed template.
 .env
 .env.*
 liveapp/.env
 liveapp/seed_users.json
 !liveapp/.env.example
 
-# --- source data and ETL outputs: build machine only ---
+# --- source data and ETL outputs: build machine only (~450 MB) ---
 Input/
+updating_files/
 output/
 history/
-updating_files/
+liveapp/storage/
 *.xlsx
 *.xls
 *.csv
 *.parquet
 *.zip
-liveapp/storage/
 
 # --- local Python artefacts ---
 __pycache__/
@@ -35,22 +40,24 @@ venv/
 .pytest_cache/
 .mypy_cache/
 
-# --- tooling / docs: not needed at runtime ---
+# --- VCS and deployment internals ---
 .git/
 .gitignore
-.venv
+.vercel/
+
+# --- docs: useful on GitHub, dead weight in the bundle ---
 DEPLOYMENT.md
 LIVE_DATABASE_DASHBOARD.md
 PROCESS_SUMMARY.md
 liveapp/README.md
 
-# --- ETL scripts: run on the build machine, never inside the function ---
-Rename.py
-achieved_sbf.py
-find_easy_sbf.py
-find_opening_easy_sbf.py
-monthly_reset.py
-zip_site.py
-publish_site.py
-
-# KEEP: liveapp/** (app + frontend), _dashboard_template.html, api/**, build_dashboard.py
+# KEEP (required at runtime):
+#   api/**                     the function entrypoint
+#   liveapp/app/**             the FastAPI application
+#   liveapp/frontend/**        login shell + admin panel
+#   liveapp/main.py            local dev launcher
+#   liveapp/run_process.py     local ETL launcher
+#   liveapp/requirements.txt   local dependency set
+#   _dashboard_template.html   the dashboard UI, served at /_dashboard_template.html
+#   build_dashboard.py         imported by liveapp/app/services/builder.py
+#   requirements.txt           the dependency set Vercel installs

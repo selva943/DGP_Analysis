@@ -12,6 +12,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -161,6 +162,34 @@ class ProcessJob(Base):
     report_type: Mapped[str] = mapped_column(String(16), default="")
     plan_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
     achieved_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+
+class UploadSession(Base):
+    """A chunked upload of a dashboard bundle, assembled on commit.
+
+    Vercel caps a request body at 4.5 MB and the built ``output/site.zip`` is
+    already about 4.1 MB, so a single multipart POST has almost no headroom and
+    breaks as soon as a month of data is added.
+
+    Parts are staged in the database rather than in ``/tmp`` on purpose. A
+    serverless instance is not guaranteed to be the same one for the next
+    request, so local disk cannot be relied on to hold half an upload; the
+    database is shared by every instance.
+    """
+
+    __tablename__ = "upload_session"
+    __table_args__ = (UniqueConstraint("upload_id", "chunk_index"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    upload_id: Mapped[str] = mapped_column(String(64), index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    total_chunks: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=dt.datetime.utcnow
+    )
 
 
 class DatasetVersion(Base):

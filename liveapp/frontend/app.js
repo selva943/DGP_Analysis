@@ -33,7 +33,6 @@ const importDiskBtn = document.getElementById('importDiskBtn');
 const uploadMsg = document.getElementById('uploadMsg');
 const clearUploadMsg = document.getElementById('clearUploadMsg');
 
-const processBtn = document.getElementById('processBtn');
 const processHint = document.getElementById('processHint');
 
 function setError(msg) {
@@ -203,9 +202,7 @@ uploadForm.addEventListener('submit', async (e) => {
     showUploadMsg('Select the zipped output/site folder first.');
     return;
   }
-  const fd = new FormData();
-  fd.append('file', uploadFiles.files[0]);
-  await runImport(fd, 'Uploading zip...');
+  await runChunkedImport(uploadFiles.files[0]);
 });
 
 // Import the bundle already sitting in output/site on the server.
@@ -215,19 +212,71 @@ importDiskBtn.addEventListener('click', async () => {
   await runImport(fd, 'Reading output/site from the server...');
 });
 
+// Slice the zip and send it in parts.
+//
+// A serverless request body is capped at 4.5 MB and output/site.zip is already
+// about 4.1 MB, so a single POST has almost no headroom and breaks as soon as
+// a month of data is added. The server stages parts in the database, so the
+// upload survives being routed to a different serverless instance per request.
+async function runChunkedImport(file) {
+  uploadSubmit.disabled = true;
+  importDiskBtn.disabled = true;
+  try {
+    showUploadMsg('Preparing upload...');
+    const init = new FormData();
+    init.append('filename', file.name || 'site.zip');
+    // Two slices minimum so the server can pick a size it knows fits.
+    const total = Math.max(2, Math.ceil(file.size / (3 * 1024 * 1024)));
+    init.append('total_chunks', String(total));
+
+    const session = await api('/admin/import-site/chunked/init', { method: 'POST', body: init });
+    const chunkBytes = session.chunk_bytes;
+    const slices = Math.ceil(file.size / chunkBytes);
+
+    for (let i = 0; i < slices; i++) {
+      const blob = file.slice(i * chunkBytes, Math.min((i + 1) * chunkBytes, file.size));
+      const fd = new FormData();
+      fd.append('upload_id', session.upload_id);
+      fd.append('chunk_index', String(i));
+      fd.append('chunk', blob, 'part');
+      showUploadMsg('Uploading part ' + (i + 1) + ' of ' + slices + '...');
+      await api('/admin/import-site/chunked/part', { method: 'POST', body: fd });
+    }
+
+    showUploadMsg('Publishing ' + slices + ' parts into the database...');
+    const done = new FormData();
+    done.append('upload_id', session.upload_id);
+    const res = await api('/admin/import-site/chunked/commit', { method: 'POST', body: done });
+
+    showUploadMsg(importSummary(res));
+    appendLog('Imported site bundle as version #' + res.version_id +
+              ' (' + res.n_customers + ' customers)');
+    uploadFiles.value = '';
+    refreshAdmin();
+    loadDashboardFrame();
+  } catch (err) {
+    showUploadMsg('Import failed: ' + (err.message || err));
+  } finally {
+    uploadSubmit.disabled = false;
+    importDiskBtn.disabled = false;
+  }
+}
+
+function importSummary(res) {
+  return 'Imported successfully.\n' +
+    '  dataset version : v#' + res.version_id + '\n' +
+    '  DSEs            : ' + res.n_dse + '\n' +
+    '  customers       : ' + res.n_customers + '\n' +
+    '  plan dates      : ' + (res.plan_dates || []).join(', ');
+}
+
 async function runImport(fd, progressText) {
   uploadSubmit.disabled = true;
   importDiskBtn.disabled = true;
   showUploadMsg(progressText);
   try {
     const res = await api('/admin/import-site', { method: 'POST', body: fd });
-    showUploadMsg(
-      'Imported successfully.\n' +
-      '  dataset version : v#' + res.version_id + '\n' +
-      '  DSEs            : ' + res.n_dse + '\n' +
-      '  customers       : ' + res.n_customers + '\n' +
-      '  plan dates      : ' + (res.plan_dates || []).join(', ')
-    );
+    showUploadMsg(importSummary(res));
     appendLog('Imported site bundle as version #' + res.version_id +
               ' (' + res.n_customers + ' customers)');
     uploadFiles.value = '';

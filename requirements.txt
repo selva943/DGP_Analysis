@@ -1,20 +1,36 @@
 # Lean dependency set for the Vercel serverless function (api/index.py).
 #
-# Deliberately excludes pandas / pyarrow / openpyxl-for-ETL: those are only
-# needed by the ETL scripts and the bundle importer, both of which run on the
-# source machine via publish_site.py. Keeping them out keeps the function
-# small enough to deploy and fast to cold-start.
+# Deliberately excludes pandas / pyarrow: those are only needed by the ETL
+# scripts and the bundle importer, both of which run on the source machine via
+# publish_site.py. Keeping them out keeps the function small and cold starts
+# fast.
 #
 # openpyxl IS included: the Viewer Activity XLSX export writes a real
 # spreadsheet, and that runs from the browser against the deployed API.
+#
+# Upper bounds are deliberate, not decoration. On 2026-09-24 SQLAlchemy 2.1
+# changed the default driver for a bare "postgresql://" URL from psycopg2 to
+# psycopg (v3). Because this file only had ">=2.0", the serverless build picked
+# up 2.1 and every request died with:
+#     ModuleNotFoundError: No module named 'psycopg'
+# while the development machine stayed on 2.0 and kept working. Both drivers
+# are listed below and config.py pins the scheme explicitly, so the default no
+# longer decides. The upper bounds stop the next major release from repeating
+# that surprise without a code review noticing.
+#
+# If you change anything here, change liveapp/requirements.txt too, then run
+# the local verification steps in DEPLOYMENT.md.
 
-fastapi>=0.115
-sqlalchemy>=2.0
-psycopg2-binary>=2.9
-pydantic>=2.7
-pydantic-settings>=2.2
-PyJWT>=2.8
-bcrypt>=4.0
-cryptography>=42.0
-python-multipart>=0.0.9
-openpyxl>=3.1
+fastapi>=0.115,<1.0
+sqlalchemy>=2.0,<2.2
+# psycopg (v3) is the SQLAlchemy 2.1+ default; psycopg2-binary stays for the
+# explicit postgresql+psycopg2:// scheme and for older SQLAlchemy installs.
+psycopg[binary]>=3.1,<4.0
+psycopg2-binary>=2.9,<3.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.2,<3.0
+PyJWT>=2.8,<3.0
+bcrypt>=4.0,<6.0
+cryptography>=42.0,<47.0
+python-multipart>=0.0.9,<1.0
+openpyxl>=3.1,<4.0

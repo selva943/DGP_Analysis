@@ -1,14 +1,23 @@
-fastapi>=0.115
+# Full dependency set for running the app AND the ETL pipeline locally.
+#
+# Keep the upper bounds aligned with the root requirements.txt. They exist
+# because SQLAlchemy 2.1 (2026-09-24) silently switched the default PostgreSQL
+# driver to psycopg (v3) and broke the deployed function while local stayed on
+# 2.0. See the comment in the root requirements.txt and DEPLOYMENT.md.
+
+fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30
-SQLAlchemy>=2.0
-psycopg2-binary>=2.9
-pydantic>=2.7
-pydantic-settings>=2.2
-PyJWT>=2.8
-bcrypt>=4.0
+SQLAlchemy>=2.0,<2.2
+# Both PostgreSQL drivers: see root requirements.txt for why.
+psycopg[binary]>=3.1,<4.0
+psycopg2-binary>=2.9,<3.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.2,<3.0
+PyJWT>=2.8,<3.0
+bcrypt>=4.0,<6.0
 # Needed by services/site_bundle.py to read legacy encrypted bundles.
-cryptography>=42.0
-pandas>=2.2
-openpyxl>=3.1
+cryptography>=42.0,<47.0
+pandas>=2.2,<3.0
+openpyxl>=3.1,<4.0
 pyarrow>=15
-python-multipart>=0.0.9
+python-multipart>=0.0.9,<1.0

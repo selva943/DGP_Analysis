@@ -12,16 +12,26 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import LIVEAPP_DIR, settings
 from .database import init_db
-from .routers import admin, auth, data
+from .routers import admin, auth, data, health
 from .seed import bootstrap_admin, seed_users
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Prepare the database before the app starts serving requests."""
+    """Prepare the database, but never fail the boot because of it.
+
+    Vercel runs lifespan startup through uvicorn with ``lifespan="auto"``. If
+    this handler raises, the process exits before the ASGI app is served and
+    every single request comes back as ``500 FUNCTION_INVOCATION_FAILED`` with
+    no diagnostic in the logs. A database that is briefly unreachable must
+    degrade to a 503 on the affected endpoints, not take the site offline.
+    """
     _warn_if_insecure()
-    init_db()
-    _ensure_first_user()
+    error = init_db()
+    if error is None:
+        _ensure_first_user()
+    else:
+        print(f"[liveapp] database not ready, serving degraded: {error}")
     yield
 
 
@@ -47,6 +57,7 @@ if settings.cors_origin_list:
 app.include_router(auth.router)
 app.include_router(data.router)
 app.include_router(admin.router)
+app.include_router(health.router)
 
 
 FRONTEND_DIR = LIVEAPP_DIR / "frontend"
